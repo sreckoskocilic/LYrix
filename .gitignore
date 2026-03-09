@@ -1,0 +1,23 @@
+# Environment / secrets
+.env
+
+# Runtime data
+lyrics_catalog.json
+lyrics_catalog.tmp
+settings.json
+
+# Build artifacts
+build/
+dist/
+*.spec.bak
+__pycache__/
+*.py[cod]
+*.pyo
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
