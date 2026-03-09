@@ -18,7 +18,7 @@ mut_d, mut_b, mut_h = collect_all("mutagen")
 dot_d, dot_b, dot_h = collect_all("dotenv")
 
 a = Analysis(
-    ["lyrix/browser.py"],
+    ["run.py"],
     pathex=["."],
     binaries=lg_b + pyg_b + mut_b + dot_b,
     datas=datas + lg_d + pyg_d + mut_d + dot_d,
