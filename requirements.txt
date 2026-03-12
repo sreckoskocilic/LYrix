@@ -2,9 +2,5 @@ lyricsgenius
 mutagen
 python-dotenv
 pyglet
-
-# macOS menu bar launcher (optional)
-# rumps
-
-# Windows build
-# pyinstaller
+rumps
+pyinstaller
