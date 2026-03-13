@@ -2,5 +2,5 @@ lyricsgenius
 mutagen
 python-dotenv
 pyglet
-rumps
+rumps; sys_platform == "darwin"
 pyinstaller
