@@ -17,14 +17,18 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.14"
+          cache: 'pip'
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt -r requirements-dev.txt
+          python -m pip install -r requirements.txt -r requirements-dev.txt ruff
+
+      - name: Run linter
+        run: ruff check lyrix/
 
       - name: Run tests
         env:
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
         run: |
-          python -m pytest -p pytest_cov --cov=lyrix --cov-report=term-missing
+          python -m pytest -p pytest_cov --cov=lyrix --cov-report=term-missing --cov-fail-under=100
