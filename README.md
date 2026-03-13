@@ -1,5 +1,10 @@
 # Lyrix
 
+[![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/)
+[![Tests](https://img.shields.io/badge/tests-34%20passed-green.svg)](https://github.com/skocho/lyrix/actions)
+[![Coverage](https://img.shields.io/badge/coverage-100%25-green.svg)](https://github.com/skocho/lyrix/actions)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Two tkinter apps for searching and local browsing song lyrics via the [Genius API](https://genius.com/api-clients).
 
 ## Apps
