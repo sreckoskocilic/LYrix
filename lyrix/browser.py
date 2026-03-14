@@ -62,10 +62,12 @@ class LyricsBrowser(LyricsBaseApp):
 
         self._load_custom_font()
         self._apply_styles()
-        self._build_ui()
 
-        # Read settings once for both geometry and sash position
+        # Read settings once for font size, geometry, and sash position
         settings = self._read_settings()
+        self._restore_font_size(settings)
+        self._build_ui()
+        self._bind_font_size_keys()
         self._restore_geometry(default="1000x680", settings=settings)
         sash = settings.get("sash", {}).get(type(self).__name__)
         self.master.after(
@@ -207,7 +209,7 @@ class LyricsBrowser(LyricsBaseApp):
         frame = ttk.Frame(parent, padding=(8, 0, 0, 0))
         self.lyrics_window = st.ScrolledText(
             frame,
-            font=(FONT_NAME, 10),
+            font=(FONT_NAME, self._font_size),
             fg=self.ACCENT,
             bg="black",
             selectbackground=self.BTN_BG,

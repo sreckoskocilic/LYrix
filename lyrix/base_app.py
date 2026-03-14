@@ -50,6 +50,10 @@ class LyricsBaseApp:
     BTN_BG = "#45475a"
     BTN_ACTIVE = "#585b70"
 
+    FONT_SIZE_DEFAULT = 11
+    FONT_SIZE_MIN = 6
+    FONT_SIZE_MAX = 32
+
     def __init__(self, master):
         _setup_logging()
         self.master = master
@@ -59,6 +63,7 @@ class LyricsBaseApp:
         self._status_after_id = None
         self.status_var = tk.StringVar()
         self.master.protocol("WM_DELETE_WINDOW", self._on_close)
+        self._font_size = self.FONT_SIZE_DEFAULT
 
     # ── Font ──────────────────────────────────────────────────────────────────
 
@@ -90,6 +95,30 @@ class LyricsBaseApp:
             foreground=self.FG,
         )
         s.map("TButton", background=[("active", self.BTN_ACTIVE)])
+
+    # ── Font size ─────────────────────────────────────────────────────────────
+
+    def _bind_font_size_keys(self):
+        mod = "Command" if sys.platform == "darwin" else "Control"
+        # Use bind_all so the shortcut fires even when a child widget (e.g. ScrolledText) has focus.
+        # Bind both <equal> and <plus>/<Shift-equal> to cover Cmd+= and Cmd++ (Shift+=).
+        for seq in (f"<{mod}-equal>", f"<{mod}-plus>", f"<{mod}-Shift-equal>"):
+            self.master.bind_all(seq, lambda e: self._change_font_size(1))
+        self.master.bind_all(f"<{mod}-minus>", lambda e: self._change_font_size(-1))
+
+    def _change_font_size(self, delta: int):
+        new_size = max(
+            self.FONT_SIZE_MIN, min(self.FONT_SIZE_MAX, self._font_size + delta)
+        )
+        if new_size == self._font_size:
+            return
+        self._font_size = new_size
+        self.lyrics_window.configure(font=(FONT_NAME, new_size))
+
+    def _restore_font_size(self, settings: dict | None = None):
+        if settings is None:
+            settings = self._read_settings()
+        self._font_size = settings.get("font_size", self.FONT_SIZE_DEFAULT)
 
     # ── Genius client ─────────────────────────────────────────────────────────
 
@@ -168,6 +197,7 @@ class LyricsBaseApp:
     def _collect_settings(self, data: dict) -> dict:
         """Populate data with this app's persistent state. Override to add more."""
         data.setdefault("geometry", {})[type(self).__name__] = self.master.geometry()
+        data["font_size"] = self._font_size
         return data
 
     # ── Close ─────────────────────────────────────────────────────────────────

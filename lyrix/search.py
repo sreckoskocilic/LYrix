@@ -50,8 +50,10 @@ class LyricsApp(LyricsBaseApp):
 
         self._load_custom_font()
         self._apply_base_styles()
+        settings = self._read_settings()
+        self._restore_font_size(settings)
         self._build_ui()
-        self._restore_geometry(default="900x620")
+        self._restore_geometry(default="900x620", settings=settings)
 
         self.genius = self._create_genius_client(warn=True)
 
@@ -83,7 +85,7 @@ class LyricsApp(LyricsBaseApp):
         self.lyrics_window = st.ScrolledText(
             frame,
             height=30,
-            font=(FONT_NAME, 11),
+            font=(FONT_NAME, self._font_size),
             fg=self.ACCENT,
             bg="black",
             selectbackground=self.BTN_BG,
@@ -122,6 +124,7 @@ class LyricsApp(LyricsBaseApp):
         mod = "Command" if sys.platform == "darwin" else "Control"
         self.master.bind(f"<{mod}-l>", lambda e: self.clear_output())
         self.master.bind(f"<{mod}-s>", lambda e: self.save_to_file())
+        self._bind_font_size_keys()
 
         ttk.Label(frame, textvariable=self.status_var, font=(FONT_NAME, 9)).pack(
             anchor="w", pady=(4, 0)
