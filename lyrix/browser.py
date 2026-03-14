@@ -696,7 +696,7 @@ class LyricsBrowser(LyricsBaseApp):
             self.catalog.add(
                 ss.artist,
                 ss.title,
-                ss_album.get("name", album),
+                album or ss_album.get("name", ""),
                 _release_year(ss_album),
                 ss.to_text(),
                 track=track_num,
@@ -804,20 +804,41 @@ class LyricsBrowser(LyricsBaseApp):
 
         matched_tracks: list[tuple[int | None, object]] = []
         matched_mp3_titles: set[str] = set()
+        mp3_track_nums: dict[str, int] = {}
+        for p in mp3s:
+            title = (
+                (tag_cache[p][1] or "").strip().lower()
+                if tag_cache
+                else (_read_mp3_tags(p)[1] or "").strip().lower()
+            )
+            track_num = tag_cache[p][3] if tag_cache else _read_mp3_info(p)[3]
+            mp3_track_nums[title] = track_num
+
         remaining_wanted = set(wanted_titles)
         for item in ss.tracks:
             num, track = _unpack_track(item)
             track_title_lower = track.title.strip().lower()
-            # Match if MP3 title appears in Genius title ("Ruins" in "IV. Ruins")
-            # or Genius title appears in MP3 title (reverse substring).
-            # Iterate over a snapshot so discard() doesn't mutate the active iterator.
+            resolved_num = (
+                num
+                if isinstance(num, int)
+                else (getattr(track, "number", None) or None)
+            )
             for wanted in list(remaining_wanted):
-                if wanted in track_title_lower or track_title_lower in wanted:
-                    resolved_num = (
-                        num
-                        if isinstance(num, int)
-                        else (getattr(track, "number", None) or None)
-                    )
+                has_track_num = mp3_track_nums.get(wanted, 0) > 0
+                title_exact = wanted == track_title_lower
+                title_substr = (
+                    wanted in track_title_lower or track_title_lower in wanted
+                )
+                track_match = (
+                    resolved_num is not None
+                    and mp3_track_nums.get(wanted) == resolved_num
+                )
+                if title_exact and (not has_track_num or track_match):
+                    matched_tracks.append((resolved_num, track))
+                    matched_mp3_titles.add(wanted)
+                    remaining_wanted.discard(wanted)
+                    break
+                elif title_substr and track_match:
                     matched_tracks.append((resolved_num, track))
                     matched_mp3_titles.add(wanted)
                     remaining_wanted.discard(wanted)
@@ -897,7 +918,7 @@ class LyricsBrowser(LyricsBaseApp):
             self._set_status(f"Not found: {title}")
             return
         ss_album = getattr(ss, "album", {}) or {}
-        album_name = ss_album.get("name") or album
+        album_name = album or ss_album.get("name", "")
         year = _release_year(ss_album)
         self.catalog.add(ss.artist, ss.title, album_name, year, ss.to_text())
         self._refresh_tree()

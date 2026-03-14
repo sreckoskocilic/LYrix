@@ -1,4 +1,3 @@
-import sys
 import threading
 import tkinter as tk
 import tkinter.filedialog as fd

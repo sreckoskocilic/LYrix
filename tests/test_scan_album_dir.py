@@ -94,7 +94,7 @@ class ScanAlbumDirTests(unittest.TestCase):
             p.touch()
 
         def fake_tags(path):
-            return "Nile", "Ruins", "In Their Darkened Shrines"
+            return "Nile", "Ruins", "In Their Darkened Shrines", 4
 
         # Album track has full title "In Their Darkened Shrines: IV. Ruins"
         album_tracks = [(4, _FakeTrack("In Their Darkened Shrines: IV. Ruins"))]
@@ -103,7 +103,7 @@ class ScanAlbumDirTests(unittest.TestCase):
         )
         browser = self._make_browser(album)
 
-        with patch("lyrix.browser._read_mp3_tags", side_effect=fake_tags):
+        with patch("lyrix.browser._read_mp3_info", side_effect=fake_tags):
             added, skipped, failed, matched = browser._scan_album_dir(
                 "Nile", "In Their Darkened Shrines", mp3s
             )
