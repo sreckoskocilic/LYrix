@@ -653,11 +653,7 @@ class LyricsBrowser(LyricsBaseApp):
 
         # Read all MP3 tags once (eliminates 2-3x redundant parses per file)
         tag_cache = {p: _read_mp3_info(p) for p in mp3s}
-        new = [
-            p
-            for p in mp3s
-            if not self._mp3_in_catalog(p, tag_cache[p])
-        ]
+        new = [p for p in mp3s if not self._mp3_in_catalog(p, tag_cache[p])]
         if not new:
             mb.showinfo("Scan", f"All {len(mp3s)} MP3s are already in the catalog.")
             return
@@ -723,7 +719,11 @@ class LyricsBrowser(LyricsBaseApp):
                 )
                 try:
                     a, s, f, matched_titles = self._scan_album_dir(
-                        artist, album, mp3s, folder_year=folder_year, tag_cache=tag_cache
+                        artist,
+                        album,
+                        mp3s,
+                        folder_year=folder_year,
+                        tag_cache=tag_cache,
                     )
                 except Exception:
                     a = s = 0
@@ -736,8 +736,12 @@ class LyricsBrowser(LyricsBaseApp):
                         if self._closing:
                             break
                         done += 1
-                        a_, s_, f_ = self._fetch_and_add_single(path, tag_cache, done, total)
-                        added += a_; skipped += s_; failed += f_
+                        a_, s_, f_ = self._fetch_and_add_single(
+                            path, tag_cache, done, total
+                        )
+                        added += a_
+                        skipped += s_
+                        failed += f_
                     continue
 
                 added += a
@@ -754,15 +758,23 @@ class LyricsBrowser(LyricsBaseApp):
                 for path in unmatched:
                     if self._closing:
                         break
-                    a_, s_, f_ = self._fetch_and_add_single(path, tag_cache, done, total)
-                    added += a_; skipped += s_; failed += f_
+                    a_, s_, f_ = self._fetch_and_add_single(
+                        path, tag_cache, done, total
+                    )
+                    added += a_
+                    skipped += s_
+                    failed += f_
             else:
                 for path in mp3s:
                     if self._closing:
                         break
                     done += 1
-                    a_, s_, f_ = self._fetch_and_add_single(path, tag_cache, done, total)
-                    added += a_; skipped += s_; failed += f_
+                    a_, s_, f_ = self._fetch_and_add_single(
+                        path, tag_cache, done, total
+                    )
+                    added += a_
+                    skipped += s_
+                    failed += f_
         self._ui(self._on_scan_done, added, skipped, failed, total)
 
     def _scan_album_dir(

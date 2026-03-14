@@ -2,7 +2,6 @@ import json
 import logging
 import os
 import sys
-from pathlib import Path
 import tkinter as tk
 from tkinter import ttk
 

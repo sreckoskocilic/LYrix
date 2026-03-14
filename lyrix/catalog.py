@@ -123,9 +123,7 @@ def _read_mp3_track_num(path: Path) -> int:
     return _read_mp3_info(path)[3]
 
 
-def _detect_album(
-    mp3s: list, tag_cache: dict | None = None
-) -> tuple[str, str] | None:
+def _detect_album(mp3s: list, tag_cache: dict | None = None) -> tuple[str, str] | None:
     """Return (artist, album) if ≥70% of files share the same album tag, else None."""
     if tag_cache is not None:
         tags = [(tag_cache[p][0], tag_cache[p][1], tag_cache[p][2]) for p in mp3s]
