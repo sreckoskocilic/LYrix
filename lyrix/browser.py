@@ -245,12 +245,16 @@ class LyricsBrowser(LyricsBaseApp):
         )
         self._fetch_missing_btn.pack(side="left")
 
-        # Buttons — row 4: export
+        # Buttons — row 4: export / fetch missing
         btn_row4 = ttk.Frame(frame)
         btn_row4.pack(fill="x", pady=(2, 0))
         ttk.Button(
             btn_row4, text="Export…", width=13, command=self._export_catalog
-        ).pack(side="left")
+        ).pack(side="left", padx=(0, 4))
+        self._fetch_missing_btn = ttk.Button(
+            btn_row4, text="Fetch Missing", width=13, command=self._fetch_missing
+        )
+        self._fetch_missing_btn.pack(side="left")
 
         # Collect genius-gated buttons for bulk enable/disable
         self._gated_buttons = [
