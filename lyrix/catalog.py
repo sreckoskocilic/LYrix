@@ -173,7 +173,7 @@ def _artist_matches(expected: str, actual: str, threshold: float = 0.8) -> bool:
 
 
 class Catalog:
-    """Persistent JSON-backed store keyed by (artist, title)."""
+    """Persistent JSON-backed store keyed by (artist, title, album)."""
 
     def __init__(self, path: Path = CATALOG_PATH):
         self._path = path
@@ -185,7 +185,19 @@ class Catalog:
         if self._path.exists():
             try:
                 raw = json.loads(self._path.read_text(encoding="utf-8"))
-                self._data = raw.get("entries", {})
+                data = raw.get("entries", {})
+                migrated = {}
+                needs_save = False
+                for key, entry in data.items():
+                    if key.count("\t") == 1:
+                        album_lower = (entry.get("album") or "").lower().strip()
+                        migrated[f"{key}\t{album_lower}"] = entry
+                        needs_save = True
+                    else:
+                        migrated[key] = entry
+                self._data = migrated
+                if needs_save:
+                    self._save()
             except Exception as exc:
                 logging.getLogger(__name__).error(
                     "Catalog at %s is unreadable (%s) — starting empty; "
@@ -219,8 +231,8 @@ class Catalog:
             raise
 
     @staticmethod
-    def _key(artist: str, title: str) -> str:
-        return f"{artist.lower().strip()}\t{title.lower().strip()}"
+    def _key(artist: str, title: str, album: str = "") -> str:
+        return f"{artist.lower().strip()}\t{title.lower().strip()}\t{(album or '').lower().strip()}"
 
     def add(
         self,
@@ -232,7 +244,7 @@ class Catalog:
         track: int = 0,
     ):
         with self._lock:
-            key = self._key(artist, title)
+            key = self._key(artist, title, album)
             existing_added = self._data.get(key, {}).get("added", "")
             self._data[key] = {
                 "artist": artist,
@@ -252,7 +264,7 @@ class Catalog:
         now = datetime.now().isoformat(timespec="seconds")
         with self._lock:
             for e in entries:
-                key = self._key(e["artist"], e["title"])
+                key = self._key(e["artist"], e["title"], e.get("album", ""))
                 existing_added = self._data.get(key, {}).get("added", "")
                 self._data[key] = {
                     "artist": e["artist"],
@@ -265,23 +277,54 @@ class Catalog:
                 }
             self._save()
 
-    def get(self, artist: str, title: str):
+    def get(self, artist: str, title: str, album: str = ""):
         with self._lock:
-            return self._data.get(self._key(artist, title))
+            if album:
+                result = self._data.get(self._key(artist, title, album))
+                if result is not None:
+                    return result
+            # Fallback: find any entry matching artist\ttitle\t*
+            prefix = f"{artist.lower().strip()}\t{title.lower().strip()}\t"
+            for key, entry in self._data.items():
+                if key.startswith(prefix):
+                    return entry
+            return None
 
-    def remove(self, artist: str, title: str):
-        key = self._key(artist, title)
+    def remove(self, artist: str, title: str, album: str = ""):
         with self._lock:
-            if key in self._data:
-                del self._data[key]
-                self._save()
+            if album:
+                key = self._key(artist, title, album)
+                if key in self._data:
+                    del self._data[key]
+                    self._save()
+            else:
+                prefix = f"{artist.lower().strip()}\t{title.lower().strip()}\t"
+                keys = [k for k in self._data if k.startswith(prefix)]
+                for k in keys:
+                    del self._data[k]
+                if keys:
+                    self._save()
 
     def remove_entries(self, pairs: list) -> int:
-        """Remove multiple (artist, title) pairs in a single save."""
+        """Remove multiple (artist, title) pairs in a single save, deleting ALL album variants."""
         removed = 0
         with self._lock:
             for artist, title in pairs:
-                key = self._key(artist, title)
+                prefix = f"{artist.lower().strip()}\t{title.lower().strip()}\t"
+                keys = [k for k in self._data if k.startswith(prefix)]
+                for k in keys:
+                    del self._data[k]
+                removed += len(keys)
+            if removed:
+                self._save()
+        return removed
+
+    def remove_album_entries(self, triples: list) -> int:
+        """Remove entries by exact (artist, title, album) triples in a single save."""
+        removed = 0
+        with self._lock:
+            for artist, title, album in triples:
+                key = self._key(artist, title, album)
                 if key in self._data:
                     del self._data[key]
                     removed += 1

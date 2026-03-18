@@ -236,6 +236,142 @@ class CatalogTests(unittest.TestCase):
             self.assertEqual(cat.get("A", "Song")["added"], original_added)
             self.assertEqual(cat.get("A", "Song")["lyrics"], "updated lyrics")
 
+    def test_same_song_different_albums_are_separate_entries(self):
+        """Same (artist, title) under two albums must be stored as independent entries."""
+        with TemporaryDirectory() as tmp:
+            cat = Catalog(Path(tmp) / "catalog.json")
+            cat.add(
+                "Suffocation", "Infecting the Crypts", "Human Waste", "1991", "lyrics A"
+            )
+            cat.add(
+                "Suffocation",
+                "Infecting the Crypts",
+                "Effigy of the Forgotten",
+                "1991",
+                "lyrics B",
+            )
+            self.assertEqual(len(cat), 2)
+            a = cat.get("Suffocation", "Infecting the Crypts", "Human Waste")
+            b = cat.get(
+                "Suffocation", "Infecting the Crypts", "Effigy of the Forgotten"
+            )
+            self.assertEqual(a["lyrics"], "lyrics A")
+            self.assertEqual(b["lyrics"], "lyrics B")
+
+    def test_get_without_album_returns_any_match(self):
+        """get(artist, title) without album should find an entry regardless of album."""
+        with TemporaryDirectory() as tmp:
+            cat = Catalog(Path(tmp) / "catalog.json")
+            cat.add("Artist", "Song", "Album X", "", "lyrics")
+            entry = cat.get("Artist", "Song")
+            self.assertIsNotNone(entry)
+            self.assertEqual(entry["title"], "Song")
+
+    def test_remove_album_entries_does_not_touch_other_albums(self):
+        """remove_album_entries must only delete the exact (artist, title, album) triple."""
+        with TemporaryDirectory() as tmp:
+            cat = Catalog(Path(tmp) / "catalog.json")
+            cat.add(
+                "Suffocation", "Infecting the Crypts", "Human Waste", "1991", "lyrics A"
+            )
+            cat.add(
+                "Suffocation",
+                "Infecting the Crypts",
+                "Effigy of the Forgotten",
+                "1991",
+                "lyrics B",
+            )
+            removed = cat.remove_album_entries(
+                [("Suffocation", "Infecting the Crypts", "Human Waste")]
+            )
+            self.assertEqual(removed, 1)
+            self.assertEqual(len(cat), 1)
+            # Effigy entry must still exist
+            entry = cat.get(
+                "Suffocation", "Infecting the Crypts", "Effigy of the Forgotten"
+            )
+            self.assertIsNotNone(entry)
+            self.assertEqual(entry["lyrics"], "lyrics B")
+
+    def test_remove_entries_deletes_all_album_variants(self):
+        """remove_entries (artist, title) tuples deletes all album variants — existing behaviour."""
+        with TemporaryDirectory() as tmp:
+            cat = Catalog(Path(tmp) / "catalog.json")
+            cat.add("Artist", "Song", "Album A", "", "lyrics A")
+            cat.add("Artist", "Song", "Album B", "", "lyrics B")
+            removed = cat.remove_entries([("Artist", "Song")])
+            self.assertEqual(removed, 2)
+            self.assertEqual(len(cat), 0)
+
+    def test_migration_two_tab_keys(self):
+        """Old 2-tab keys (artist\\ttitle) must be migrated to 3-tab keys on load."""
+        with TemporaryDirectory() as tmp:
+            cat_path = Path(tmp) / "catalog.json"
+            cat_path.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "entries": {
+                            "artist\tsong": {
+                                "artist": "Artist",
+                                "title": "Song",
+                                "album": "My Album",
+                                "year": "2000",
+                                "track": 0,
+                                "lyrics": "old lyrics",
+                                "added": "2024-01-01T00:00:00",
+                            }
+                        },
+                    }
+                )
+            )
+            cat = Catalog(cat_path)
+            # Entry should be accessible and key migrated to 3-tab form
+            entry = cat.get("Artist", "Song", "My Album")
+            self.assertIsNotNone(entry)
+            self.assertEqual(entry["lyrics"], "old lyrics")
+
+    def test_load_already_migrated_keys(self):
+        """Keys already in 3-tab format must be preserved as-is (no double migration)."""
+        with TemporaryDirectory() as tmp:
+            cat_path = Path(tmp) / "catalog.json"
+            key = Catalog._key("Artist", "Song", "Album")
+            cat_path.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "entries": {
+                            key: {
+                                "artist": "Artist",
+                                "title": "Song",
+                                "album": "Album",
+                                "year": "2000",
+                                "track": 0,
+                                "lyrics": "lyrics",
+                                "added": "2024-01-01T00:00:00",
+                            }
+                        },
+                    }
+                )
+            )
+            cat = Catalog(cat_path)
+            self.assertEqual(len(cat), 1)
+            entry = cat.get("Artist", "Song", "Album")
+            self.assertIsNotNone(entry)
+
+    def test_remove_with_album_specific(self):
+        """remove(artist, title, album) must delete only the exact album variant."""
+        with TemporaryDirectory() as tmp:
+            cat = Catalog(Path(tmp) / "catalog.json")
+            cat.add("Artist", "Song", "Album A", "", "lyrics A")
+            cat.add("Artist", "Song", "Album B", "", "lyrics B")
+            cat.remove("Artist", "Song", "Album A")
+            self.assertEqual(len(cat), 1)
+            # Album B entry must survive
+            remaining = cat.get("Artist", "Song", "Album B")
+            self.assertIsNotNone(remaining)
+            self.assertEqual(remaining["album"], "Album B")
+
 
 if __name__ == "__main__":
     unittest.main()
