@@ -34,8 +34,10 @@ class LyricsMenuBar(rumps.App):
     def _launch(self, key: str, module: str):
         """Start module as a subprocess; skip if already running."""
         proc = self._procs.get(key)
-        if proc is not None and proc.poll() is None:
-            return
+        if proc is not None:
+            if proc.poll() is None:
+                return  # still running
+            proc.wait()  # reap the zombie before replacing
         self._procs[key] = subprocess.Popen(
             [sys.executable, "-m", module],
             cwd=str(ROOT),

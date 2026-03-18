@@ -36,9 +36,7 @@ class YearParsingTests(unittest.TestCase):
         )
         self.assertEqual(_release_year({"release_date_for_display": "1997"}), "1997")
         self.assertEqual(_release_year({"release_date_for_display": ""}), "")
-        self.assertEqual(
-            _release_year({"release_date_for_display": "Invalid"}), "Invalid"
-        )
+        self.assertEqual(_release_year({"release_date_for_display": "Invalid"}), "")
 
     def test_release_year_none_returns_empty(self):
         self.assertEqual(_release_year(None), "")

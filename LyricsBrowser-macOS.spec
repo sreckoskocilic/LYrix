@@ -102,7 +102,7 @@ app = BUNDLE(
     info_plist={
         "CFBundleName": "LyricsBrowser",
         "CFBundleDisplayName": "Lyrics Browser",
-        "CFBundleShortVersionString": "1.2.3",
+        "CFBundleShortVersionString": "1.3.0",
         "CFBundleVersion": "1",
         "NSHighResolutionCapable": True,
         "NSRequiresAquaSystemAppearance": False,  # allows dark mode

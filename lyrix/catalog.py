@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import sys
 from collections import Counter
@@ -46,7 +47,7 @@ def _release_year(album_data) -> str:
             return str(datetime.strptime(release_date, fmt).year)
         except ValueError:
             continue
-    return release_date
+    return ""
 
 
 def _song_header(song):
@@ -185,7 +186,20 @@ class Catalog:
             try:
                 raw = json.loads(self._path.read_text(encoding="utf-8"))
                 self._data = raw.get("entries", {})
-            except Exception:
+            except Exception as exc:
+                logging.getLogger(__name__).error(
+                    "Catalog at %s is unreadable (%s) — starting empty; "
+                    "original preserved as %s",
+                    self._path,
+                    exc,
+                    self._path.with_suffix(".corrupt"),
+                )
+                try:
+                    self._path.with_suffix(".corrupt").write_bytes(
+                        self._path.read_bytes()
+                    )
+                except OSError:
+                    pass
                 self._data = {}
 
     def _save(self):
@@ -218,14 +232,16 @@ class Catalog:
         track: int = 0,
     ):
         with self._lock:
-            self._data[self._key(artist, title)] = {
+            key = self._key(artist, title)
+            existing_added = self._data.get(key, {}).get("added", "")
+            self._data[key] = {
                 "artist": artist,
                 "title": title,
                 "album": album or "",
                 "year": year or "",
                 "track": track,  # track number within album; 0 = unknown
                 "lyrics": lyrics,
-                "added": datetime.now().isoformat(timespec="seconds"),
+                "added": existing_added or datetime.now().isoformat(timespec="seconds"),
             }
             self._save()
 
@@ -236,14 +252,16 @@ class Catalog:
         now = datetime.now().isoformat(timespec="seconds")
         with self._lock:
             for e in entries:
-                self._data[self._key(e["artist"], e["title"])] = {
+                key = self._key(e["artist"], e["title"])
+                existing_added = self._data.get(key, {}).get("added", "")
+                self._data[key] = {
                     "artist": e["artist"],
                     "title": e["title"],
                     "album": e.get("album") or "",
                     "year": e.get("year") or "",
                     "track": e.get("track", 0),
                     "lyrics": e["lyrics"],
-                    "added": now,
+                    "added": existing_added or now,
                 }
             self._save()
 
@@ -301,6 +319,17 @@ class Catalog:
             if updated:
                 self._save()
         return updated
+
+    def reload(self):
+        """Re-read the catalog file, picking up changes made by another process."""
+        if not self._path.exists():
+            return
+        try:
+            raw = json.loads(self._path.read_text(encoding="utf-8"))
+            with self._lock:
+                self._data = raw.get("entries", {})
+        except Exception:
+            pass  # keep existing in-memory data on read error
 
     def all_entries(self):
         with self._lock:

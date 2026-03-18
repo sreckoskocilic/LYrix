@@ -1,3 +1,4 @@
+import sys
 import threading
 import tkinter as tk
 import tkinter.filedialog as fd
@@ -174,19 +175,43 @@ class LyricsApp(LyricsBaseApp):
     # ── Search ────────────────────────────────────────────────────────────────
 
     def get_lyrics(self):
-        if not self._require_genius_client():
-            return
         artist = self.artist_entry.get().strip()
         song = self.song_entry.get().strip()
         if not artist or not song:
             mb.showerror("Error", "Artist or song input is empty!")
             return
         self.album_entry.delete(0, tk.END)
+        # Serve from catalog if available — no network call needed
+        self.catalog.reload()
+        cached = self.catalog.get(artist, song)
+        if cached and cached.get("lyrics", "").strip():
+            self._render_cached_song(cached)
+            return
+        if not self._require_genius_client():
+            return
         self._set_busy(True)
         self._set_status("Searching…")
         threading.Thread(
             target=self._fetch_song, args=(artist, song), daemon=True
         ).start()
+
+    def _render_cached_song(self, entry: dict):
+        album_str = entry.get("album") or "Unknown album"
+        year_str = entry.get("year", "")
+        header = (
+            f"{SEPARATOR}\n"
+            f"Artist: {entry['artist']}\n"
+            f"Song: {entry['title']}\n"
+            f"Album: {album_str}{' (' + year_str + ')' if year_str else ''}\n"
+            f"{SEPARATOR}\n\n"
+        )
+        self._set_output(header + entry["lyrics"])
+        if entry.get("album"):
+            self.album_entry.delete(0, tk.END)
+            self.album_entry.insert(0, entry["album"])
+        self.default_filename = entry["title"].strip() or "lyrics"
+        self.master.title(f"{entry['title']} — Lyrics Search")
+        self._set_status(f"Loaded from catalog: {entry['title']}")
 
     def _fetch_song(self, artist, song):
         result, exc = None, None
@@ -208,19 +233,56 @@ class LyricsApp(LyricsBaseApp):
         self._set_status(f"Loaded: {ss.title}")
 
     def get_album(self):
-        if not self._require_genius_client():
-            return
         artist = self.artist_entry.get().strip()
         album = self.album_entry.get().strip()
         if not artist or not album:
             mb.showerror("Error", "Artist or album input is empty!")
             return
         self.song_entry.delete(0, tk.END)
+        # Serve from catalog if all tracks with lyrics are available
+        self.catalog.reload()
+        artist_lower = artist.lower().strip()
+        album_lower = album.lower().strip()
+        cached_tracks = sorted(
+            [
+                e
+                for e in self.catalog.all_entries()
+                if e["artist"].lower().strip() == artist_lower
+                and (e.get("album") or "").lower().strip() == album_lower
+                and e.get("lyrics", "").strip()
+            ],
+            key=lambda e: (e.get("track") or 9999, e["title"].lower()),
+        )
+        if cached_tracks:
+            self._render_cached_album(cached_tracks)
+            return
+        if not self._require_genius_client():
+            return
         self._set_busy(True)
         self._set_status("Searching…")
         threading.Thread(
             target=self._fetch_album, args=(artist, album), daemon=True
         ).start()
+
+    def _render_cached_album(self, tracks: list[dict]):
+        artist_name = tracks[0]["artist"]
+        album_name = tracks[0].get("album") or "Unknown album"
+        year_str = tracks[0].get("year", "")
+        header = (
+            f"{SEPARATOR}\nArtist: {artist_name}\nAlbum: {album_name}"
+            f"{' (' + year_str + ')' if year_str else ''}\n{SEPARATOR}\n\n"
+        )
+        parts = []
+        for e in tracks:
+            num = e.get("track") or None
+            prefix = f"{num}. " if num else ""
+            parts.append(
+                f"{SEPARATOR}\n{prefix}{e['title']}\n{SEPARATOR}\n{e['lyrics']}\n\n\n"
+            )
+        self._set_output(header + "".join(parts))
+        self.default_filename = album_name
+        self.master.title(f"{album_name} — Lyrics Search")
+        self._set_status(f"Loaded from catalog: {album_name} ({len(tracks)} tracks)")
 
     def _fetch_album(self, artist, album):
         result, exc = None, None
@@ -237,7 +299,8 @@ class LyricsApp(LyricsBaseApp):
         album_name = getattr(ss, "name", "").strip() or "Unknown album"
         album_year = _release_year(ss)
         header = (
-            f"{SEPARATOR}\nArtist: {artist_name}\nAlbum: {album_name}\n{SEPARATOR}\n\n"
+            f"{SEPARATOR}\nArtist: {artist_name}\nAlbum: {album_name}"
+            f"{' (' + album_year + ')' if album_year else ''}\n{SEPARATOR}\n\n"
         )
         # Single pass: build display text and catalog entries, calling to_text() once each
         tracks_text_parts = []

@@ -1,4 +1,8 @@
+import json
+import logging
+import sys
 import threading
+from collections import Counter, deque
 import tkinter as tk
 import tkinter.filedialog as fd
 import tkinter.messagebox as mb
@@ -13,6 +17,7 @@ try:
         CATALOG_PATH,
         FONT_NAME,
         SEPARATOR,
+        _artist_matches,
         _detect_album,
         _extract_name,
         _read_mp3_info,
@@ -24,7 +29,6 @@ try:
 except ImportError:
     # Allow running as a script: python lyrix/browser.py
     import pathlib
-    import sys
 
     sys.path.append(str(pathlib.Path(__file__).resolve().parent.parent))
     from base_app import LyricsBaseApp, _year_sort  # type: ignore
@@ -33,6 +37,7 @@ except ImportError:
         CATALOG_PATH,
         FONT_NAME,
         SEPARATOR,
+        _artist_matches,
         _detect_album,
         _extract_name,
         _read_mp3_info,
@@ -52,6 +57,27 @@ def _year_from_folder(name: str) -> str:
     return ""
 
 
+def _build_track_entries(
+    tracks, artist_name: str, album_name: str, album_year: str
+) -> list[dict]:
+    """Build catalog entry dicts from a Genius album tracks list."""
+    entries = []
+    for item in tracks:
+        num, track = _unpack_track(item)
+        track_num = num if isinstance(num, int) else (getattr(track, "number", 0) or 0)
+        entries.append(
+            {
+                "artist": artist_name,
+                "title": track.title,
+                "album": album_name,
+                "year": album_year,
+                "lyrics": track.to_text(),
+                "track": track_num,
+            }
+        )
+    return entries
+
+
 class LyricsBrowser(LyricsBaseApp):
     def __init__(self, master):
         super().__init__(master)
@@ -59,6 +85,11 @@ class LyricsBrowser(LyricsBaseApp):
         self.catalog = Catalog(CATALOG_PATH)
 
         self._filter_after_id = None
+        self._current_entry: dict | None = None
+        self._undo_stack: deque[list[dict]] = deque(maxlen=20)
+        self._editing = False
+        self._filter_entry: ttk.Entry | None = None
+        self._album_iid_name: dict[str, str] = {}  # treeview iid → raw album name
 
         self._load_custom_font()
         self._apply_styles()
@@ -79,6 +110,14 @@ class LyricsBrowser(LyricsBaseApp):
         if self.genius is None:
             for btn in self._gated_buttons:
                 btn.configure(state="disabled")
+
+        mod = "Command" if sys.platform == "darwin" else "Control"
+        self.master.bind_all(f"<{mod}-z>", lambda e: self._undo_remove())
+        self.master.bind_all(f"<{mod}-f>", lambda e: self._focus_filter())
+        self.master.bind_all(
+            "<Escape>",
+            lambda e: self._cancel_edit() if self._editing else self._clear_filter(),
+        )
 
         self._refresh_tree()
 
@@ -136,15 +175,19 @@ class LyricsBrowser(LyricsBaseApp):
 
         # Filter entry
         self.filter_var = tk.StringVar()
-        filter_entry = ttk.Entry(
+        self._filter_entry = ttk.Entry(
             frame, textvariable=self.filter_var, font=(FONT_NAME, 10)
         )
-        filter_entry.pack(fill="x", pady=(0, 4))
-        filter_entry.bind("<FocusIn>", lambda e: self._filter_focus_in(filter_entry))
-        filter_entry.bind("<FocusOut>", lambda e: self._filter_focus_out(filter_entry))
+        self._filter_entry.pack(fill="x", pady=(0, 4))
+        self._filter_entry.bind(
+            "<FocusIn>", lambda e: self._filter_focus_in(self._filter_entry)
+        )
+        self._filter_entry.bind(
+            "<FocusOut>", lambda e: self._filter_focus_out(self._filter_entry)
+        )
         self._filter_placeholder = True
-        filter_entry.insert(0, "Filter…")
-        filter_entry.configure(foreground="#6c7086")
+        self._filter_entry.insert(0, "Filter…")
+        self._filter_entry.configure(foreground="#6c7086")
 
         # Treeview
         tree_frame = ttk.Frame(frame)
@@ -155,10 +198,14 @@ class LyricsBrowser(LyricsBaseApp):
         self.tree.pack(side="left", fill="both", expand=True)
         vsb.pack(side="right", fill="y")
         self.tree.bind("<<TreeviewSelect>>", self._on_tree_select)
+        self.tree.bind("<Return>", self._on_tree_select)
+        btn = "<Button-2>" if sys.platform == "darwin" else "<Button-3>"
+        self.tree.bind(btn, self._on_tree_right_click)
         self.filter_var.trace_add("write", self._on_filter_change)
         self.tree.tag_configure("artist", font=(FONT_NAME, 9, "bold"))
         self.tree.tag_configure("album", foreground=self.FG)
         self.tree.tag_configure("song", foreground=self.ACCENT)
+        self.tree.tag_configure("missing", foreground="#6c7086")
 
         # Buttons — row 1: add content
         btn_row1 = ttk.Frame(frame)
@@ -182,13 +229,27 @@ class LyricsBrowser(LyricsBaseApp):
         self._fill_years_btn = ttk.Button(
             btn_row2, text="Fill Years", width=13, command=self._fill_years
         )
-        self._fill_years_btn.pack(side="left")
+        self._fill_years_btn.pack(side="left", padx=(0, 4))
+        self._fetch_missing_btn = ttk.Button(
+            btn_row2, text="Fetch Missing", width=13, command=self._fetch_missing
+        )
+        self._fetch_missing_btn.pack(side="left")
 
-        # Buttons — row 3: remove
+        # Buttons — row 3: remove / undo
         btn_row3 = ttk.Frame(frame)
         btn_row3.pack(fill="x")
         ttk.Button(
             btn_row3, text="Remove", width=13, command=self._remove_selected
+        ).pack(side="left", padx=(0, 4))
+        ttk.Button(btn_row3, text="Undo", width=13, command=self._undo_remove).pack(
+            side="left"
+        )
+
+        # Buttons — row 4: export
+        btn_row4 = ttk.Frame(frame)
+        btn_row4.pack(fill="x", pady=(2, 0))
+        ttk.Button(
+            btn_row4, text="Export…", width=13, command=self._export_catalog
         ).pack(side="left")
 
         # Collect genius-gated buttons for bulk enable/disable
@@ -197,10 +258,13 @@ class LyricsBrowser(LyricsBaseApp):
             self._import_btn,
             self._update_btn,
             self._fill_years_btn,
+            self._fetch_missing_btn,
         ]
 
+        self._progress = ttk.Progressbar(frame, mode="indeterminate")
+        self._progress.pack(fill="x", pady=(4, 0))
         ttk.Label(frame, textvariable=self.status_var, font=(FONT_NAME, 9)).pack(
-            anchor="w", pady=(4, 0)
+            anchor="w", pady=(2, 0)
         )
 
         return frame
@@ -222,14 +286,46 @@ class LyricsBrowser(LyricsBaseApp):
             state="disabled",
         )
         self.lyrics_window.pack(fill="both", expand=True)
+        ctrl_frame = ttk.Frame(frame)
+        ctrl_frame.pack(fill="x", pady=(4, 0))
+        self._edit_btn = ttk.Button(
+            ctrl_frame,
+            text="Edit",
+            width=10,
+            command=self._toggle_edit,
+            state="disabled",
+        )
+        self._edit_btn.pack(side="right")
+        self._copy_btn = ttk.Button(
+            ctrl_frame,
+            text="Copy",
+            width=10,
+            command=self._copy_lyrics,
+            state="disabled",
+        )
+        self._copy_btn.pack(side="right", padx=(0, 4))
         return frame
 
     # ── Filter placeholder ────────────────────────────────────────────────────
 
     def _on_filter_change(self, *_):
+        if self._filter_placeholder:
+            return
         if self._filter_after_id is not None:
             self.master.after_cancel(self._filter_after_id)
         self._filter_after_id = self.master.after(200, self._refresh_tree)
+
+    def _clear_filter(self):
+        if self._filter_entry is None or self._filter_placeholder:
+            return
+        self._filter_placeholder = True
+        self._filter_entry.delete(0, tk.END)
+        self._filter_entry.insert(0, "Filter…")
+        self._filter_entry.configure(foreground="#6c7086")
+        if self._filter_after_id is not None:
+            self.master.after_cancel(self._filter_after_id)
+            self._filter_after_id = None
+        self._refresh_tree()
 
     def _filter_focus_in(self, entry):
         if self._filter_placeholder:
@@ -246,19 +342,23 @@ class LyricsBrowser(LyricsBaseApp):
     # ── Catalog browser ───────────────────────────────────────────────────────
 
     def _refresh_tree(self):
+        self.catalog.reload()
         raw_filter = (
             "" if self._filter_placeholder else self.filter_var.get().strip().lower()
         )
 
         all_entries = self.catalog.all_entries()
         total_count = len(all_entries)
+        artist_count = len({e["artist"] for e in all_entries})
         if raw_filter:
+            search_lyrics = len(raw_filter) >= 3
             all_entries = [
                 e
                 for e in all_entries
                 if raw_filter in e["artist"].lower()
                 or raw_filter in e["title"].lower()
                 or raw_filter in e.get("album", "").lower()
+                or (search_lyrics and raw_filter in e.get("lyrics", "").lower())
             ]
 
         # Pre-compute normalized keys to avoid repeated .lower() calls during sort.
@@ -284,7 +384,10 @@ class LyricsBrowser(LyricsBaseApp):
             ),
         )
 
+        album_counts: dict[tuple, int] = Counter(bk for _, _, _, bk in keyed)
+
         self.tree.delete(*self.tree.get_children())
+        self._album_iid_name.clear()
         artist_nodes: dict[str, str] = {}
         album_nodes: dict[tuple, str] = {}
 
@@ -298,29 +401,40 @@ class LyricsBrowser(LyricsBaseApp):
                     "", "end", text=artist, open=True, tags=("artist",)
                 )
             if bk not in album_nodes:
-                album_label = f"{album}  ({year})" if year else album
-                album_nodes[bk] = self.tree.insert(
+                n = album_counts[bk]
+                year_part = f"  ({year})" if year else ""
+                album_label = f"{album}{year_part}  ·  {n}"
+                album_iid = self.tree.insert(
                     artist_nodes[al],
                     "end",
                     text=album_label,
                     open=False,
                     tags=("album",),
                 )
+                album_nodes[bk] = album_iid
+                self._album_iid_name[album_iid] = album
             track_num = entry.get("track", 0)
             song_label = (
                 f"{track_num}. {entry['title']}" if track_num else entry["title"]
             )
+            has_lyrics = bool(entry.get("lyrics", "").strip())
             self.tree.insert(
                 album_nodes[bk],
                 "end",
                 text=song_label,
                 values=(entry["artist"], entry["title"]),
-                tags=("song",),
+                tags=("song" if has_lyrics else "missing",),
             )
 
-        self.catalog_count_var.set(
-            f"{total_count} song{'s' if total_count != 1 else ''}"
-        )
+        if raw_filter:
+            self.catalog_count_var.set(
+                f"{len(all_entries)} of {total_count} song{'s' if total_count != 1 else ''}"
+            )
+        else:
+            self.catalog_count_var.set(
+                f"{artist_count} artist{'s' if artist_count != 1 else ''}"
+                f" · {total_count} song{'s' if total_count != 1 else ''}"
+            )
 
     def _on_tree_select(self, _event=None):
         sel = self.tree.selection()
@@ -333,6 +447,11 @@ class LyricsBrowser(LyricsBaseApp):
         entry = self.catalog.get(artist, title)
         if not entry:
             return
+        if self._editing:
+            self._cancel_edit()
+        self._current_entry = entry
+        self._edit_btn.configure(state="normal")
+        self._copy_btn.configure(state="normal")
         self._show_entry(entry)
         self.master.title(f"{entry['title']} — Lyrics Browser")
 
@@ -347,6 +466,9 @@ class LyricsBrowser(LyricsBaseApp):
         if "song" in tags and values:
             artist, title = values[0], values[1]
             if mb.askyesno("Remove", f'Remove "{title}" from catalog?'):
+                entry = self.catalog.get(artist, title)
+                if entry:
+                    self._push_undo([entry])
                 self.catalog.remove(artist, title)
                 self._refresh_tree()
                 self._set_status(f"Removed: {title}", duration_ms=4000)
@@ -361,20 +483,27 @@ class LyricsBrowser(LyricsBaseApp):
                 "Remove Album",
                 f"Remove all {len(songs)} song(s) in this album from the catalog?",
             ):
+                entries = [e for a, t in songs if (e := self.catalog.get(a, t))]
+                if entries:
+                    self._push_undo(entries)
                 self.catalog.remove_entries(songs)
                 self._refresh_tree()
                 self._set_status(f"Removed {len(songs)} songs", duration_ms=4000)
 
         elif "artist" in tags:
             artist_name = self.tree.item(item, "text")
-            count = sum(
-                len(self.tree.get_children(album_node))
-                for album_node in self.tree.get_children(item)
-            )
+            artist_lower = artist_name.lower().strip()
+            entries = [
+                e
+                for e in self.catalog.all_entries()
+                if e["artist"].lower().strip() == artist_lower
+            ]
+            count = len(entries)
             if count and mb.askyesno(
                 "Remove Artist",
                 f'Remove all {count} song(s) by "{artist_name}" from the catalog?',
             ):
+                self._push_undo(entries)
                 removed = self.catalog.remove_artist(artist_name)
                 self._refresh_tree()
                 self._set_status(f"Removed {removed} songs", duration_ms=4000)
@@ -405,7 +534,7 @@ class LyricsBrowser(LyricsBaseApp):
             ]
             if not songs:
                 return
-            album_name = self.tree.item(item, "text").rsplit("  (", 1)[0]
+            album_name = self._album_iid_name.get(item, "")
             artist_name = songs[0][0]
             self._set_busy(True)
             self._set_status(f"Updating album: {album_name}…")
@@ -417,17 +546,14 @@ class LyricsBrowser(LyricsBaseApp):
 
         elif "artist" in tags:
             artist_name = self.tree.item(item, "text")
-            # Collect {album_name: [(artist, title), ...]}
+            # Build album_map from the full catalog (not the filtered tree) so that
+            # an active filter doesn't silently skip hidden songs.
+            artist_lower = artist_name.lower().strip()
             album_map: dict[str, list] = {}
-            for album_node in self.tree.get_children(item):
-                songs = [
-                    (v[0], v[1])
-                    for c in self.tree.get_children(album_node)
-                    if (v := self.tree.item(c, "values"))
-                ]
-                if songs:
-                    alb = self.tree.item(album_node, "text").rsplit("  (", 1)[0]
-                    album_map[alb] = songs
+            for e in self.catalog.all_entries():
+                if e["artist"].lower().strip() == artist_lower:
+                    alb = e.get("album") or ""
+                    album_map.setdefault(alb, []).append((e["artist"], e["title"]))
             if not album_map:
                 return
             total = sum(len(s) for s in album_map.values())
@@ -461,13 +587,14 @@ class LyricsBrowser(LyricsBaseApp):
         album_name = ss_album.get("name") or (existing or {}).get("album", "")
         year = _release_year(ss_album) or (existing or {}).get("year", "")
         track = (existing or {}).get("track", 0)
-        self.catalog.add(
-            ss.artist, ss.title, album_name, year, ss.to_text(), track=track
-        )
+        self.catalog.add(artist, title, album_name, year, ss.to_text(), track=track)
         self._refresh_tree()
-        self._set_status(f"Updated: {ss.title}", duration_ms=4000)
-        entry = self.catalog.get(ss.artist, ss.title)
+        self._set_status(f"Updated: {title}", duration_ms=4000)
+        entry = self.catalog.get(artist, title)
         if entry:
+            self._current_entry = entry
+            self._edit_btn.configure(state="normal")
+            self._copy_btn.configure(state="normal")
             self._show_entry(entry)
 
     # album-level update
@@ -483,25 +610,9 @@ class LyricsBrowser(LyricsBaseApp):
             album_name = getattr(ss, "name", "").strip() or album
             album_year = _release_year(ss)
             try:
-                entries_to_add = []
-                for item in ss.tracks:
-                    num, track = _unpack_track(item)
-                    track_num = (
-                        num
-                        if isinstance(num, int)
-                        else (getattr(track, "number", 0) or 0)
-                    )
-                    entries_to_add.append(
-                        {
-                            "artist": artist_name,
-                            "title": track.title,
-                            "album": album_name,
-                            "year": album_year,
-                            "lyrics": track.to_text(),
-                            "track": track_num,
-                        }
-                    )
-                self.catalog.add_many(entries_to_add)
+                self.catalog.add_many(
+                    _build_track_entries(ss.tracks, artist_name, album_name, album_year)
+                )
             except Exception as e:
                 self._ui(mb.showerror, "Error", f"Could not save album:\n{e}")
                 self._ui(self._set_busy, False)
@@ -529,33 +640,23 @@ class LyricsBrowser(LyricsBaseApp):
             if album_name and album_name.lower() != "unknown album":
                 try:
                     ss = self.genius.search_album(album_name, artist)
-                except Exception:
+                except Exception as exc:
+                    logging.getLogger(__name__).warning(
+                        "Album fetch failed for %s / %s: %s", artist, album_name, exc
+                    )
                     ss = None
                 if ss and ss.tracks:
                     a_name = _extract_name(getattr(ss, "artist", None), artist)
                     alb_name = getattr(ss, "name", "").strip() or album_name
                     alb_year = _release_year(ss)
                     try:
-                        entries_to_add = []
-                        for item in ss.tracks:
-                            num, track = _unpack_track(item)
-                            track_num = (
-                                num
-                                if isinstance(num, int)
-                                else (getattr(track, "number", 0) or 0)
-                            )
-                            entries_to_add.append(
-                                {
-                                    "artist": a_name,
-                                    "title": track.title,
-                                    "album": alb_name,
-                                    "year": alb_year,
-                                    "lyrics": track.to_text(),
-                                    "track": track_num,
-                                }
-                            )
-                        self.catalog.add_many(entries_to_add)
-                    except Exception:
+                        self.catalog.add_many(
+                            _build_track_entries(ss.tracks, a_name, alb_name, alb_year)
+                        )
+                    except Exception as exc:
+                        logging.getLogger(__name__).warning(
+                            "Album save failed for %s / %s: %s", artist, album_name, exc
+                        )
                         failed += len(ss.tracks)
                         continue
                     updated += len(ss.tracks)
@@ -566,7 +667,10 @@ class LyricsBrowser(LyricsBaseApp):
                     break
                 try:
                     ss = self.genius.search_song(t, a)
-                except Exception:
+                except Exception as exc:
+                    logging.getLogger(__name__).warning(
+                        "Song fetch failed for %s / %s: %s", a, t, exc
+                    )
                     failed += 1
                     continue
                 if ss:
@@ -575,9 +679,7 @@ class LyricsBrowser(LyricsBaseApp):
                     alb = ss_album.get("name") or (existing or {}).get("album", "")
                     yr = _release_year(ss_album) or (existing or {}).get("year", "")
                     trk = (existing or {}).get("track", 0)
-                    self.catalog.add(
-                        ss.artist, ss.title, alb, yr, ss.to_text(), track=trk
-                    )
+                    self.catalog.add(a, t, alb, yr, ss.to_text(), track=trk)
                     updated += 1
                 else:
                     failed += 1
@@ -604,8 +706,8 @@ class LyricsBrowser(LyricsBaseApp):
         # Collect unique (artist, album) pairs with no year
         missing: set[tuple[str, str]] = set()
         for e in self.catalog.all_entries():
-            if not e.get("year"):
-                missing.add((e["artist"], e.get("album") or ""))
+            if not e.get("year") and e.get("album"):
+                missing.add((e["artist"], e["album"]))
         if not missing:
             self._set_status("All albums already have years.", duration_ms=4000)
             return
@@ -635,7 +737,10 @@ class LyricsBrowser(LyricsBaseApp):
                         failed += 1
                 else:
                     failed += 1
-            except Exception:
+            except Exception as exc:
+                logging.getLogger(__name__).warning(
+                    "Year fill failed for %s / %s: %s", artist, album, exc
+                )
                 failed += 1
         self._ui(self._set_busy, False)
         self._ui(self._refresh_tree)
@@ -648,25 +753,32 @@ class LyricsBrowser(LyricsBaseApp):
         folder = fd.askdirectory(title="Select folder to scan for MP3s")
         if not folder:
             return
-        mp3s = [p for p in Path(folder).rglob("*") if p.suffix.lower() == ".mp3"]
-        if not mp3s:
-            mb.showinfo("Scan", "No MP3 files found in the selected folder.")
-            return
+        self._set_busy(True)
+        self._set_status("Reading folder…")
+        threading.Thread(
+            target=self._run_scan_prepare, args=(Path(folder),), daemon=True
+        ).start()
 
-        # Read all MP3 tags once (eliminates 2-3x redundant parses per file)
+    def _run_scan_prepare(self, folder: Path):
+        mp3s = [p for p in folder.rglob("*") if p.suffix.lower() == ".mp3"]
+        if not mp3s:
+            self._ui(self._set_busy, False)
+            self._ui(mb.showinfo, "Scan", "No MP3 files found in the selected folder.")
+            return
+        self._ui(self._set_status, f"Reading tags for {len(mp3s)} file(s)…")
         tag_cache = {p: _read_mp3_info(p) for p in mp3s}
         new = [p for p in mp3s if not self._mp3_in_catalog(p, tag_cache[p])]
         if not new:
-            mb.showinfo("Scan", f"All {len(mp3s)} MP3s are already in the catalog.")
+            self._ui(self._set_busy, False)
+            self._ui(
+                mb.showinfo, "Scan", f"All {len(mp3s)} MP3s are already in the catalog."
+            )
             return
         by_dir: dict[Path, list[Path]] = {}
         for p in new:
             by_dir.setdefault(p.parent, []).append(p)
-        self._set_busy(True)
-        self._set_status(f"Scanning 0/{len(new)}…")
-        threading.Thread(
-            target=self._run_scan, args=(by_dir, len(new), tag_cache), daemon=True
-        ).start()
+        self._ui(self._set_status, f"Scanning 0/{len(new)}…")
+        self._run_scan(by_dir, len(new), tag_cache)
 
     def _mp3_in_catalog(self, path: Path, info: tuple | None = None) -> bool:
         if info is None:
@@ -691,13 +803,16 @@ class LyricsBrowser(LyricsBaseApp):
         )
         try:
             ss = self.genius.search_song(title, artist)
-        except Exception:
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "Song fetch failed for %s / %s: %s", artist, title, exc
+            )
             return 0, 0, 1
         if ss:
             ss_album = getattr(ss, "album", {}) or {}
             self.catalog.add(
-                ss.artist,
-                ss.title,
+                artist,
+                title,
                 album or ss_album.get("name", ""),
                 _release_year(ss_album),
                 ss.to_text(),
@@ -727,7 +842,10 @@ class LyricsBrowser(LyricsBaseApp):
                         folder_year=folder_year,
                         tag_cache=tag_cache,
                     )
-                except Exception:
+                except Exception as exc:
+                    logging.getLogger(__name__).warning(
+                        "Album scan failed for %s / %s: %s", artist, album, exc
+                    )
                     a = s = 0
                     f = len(mp3s)
                     matched_titles = set()
@@ -749,17 +867,19 @@ class LyricsBrowser(LyricsBaseApp):
                 added += a
                 skipped += s
                 failed += f
-                done += len(mp3s)
 
-                # Retry unmatched tracks individually to recover anything the album match missed.
+                # Retry unmatched tracks individually; advance done per file so the
+                # progress counter moves rather than freezing during the retry phase.
                 unmatched: list[Path] = []
                 for p in mp3s:
-                    title = (tag_cache[p][1] or "").strip().lower()
-                    if title not in matched_titles:
+                    t = (tag_cache[p][1] or "").strip().lower()
+                    if t not in matched_titles:
                         unmatched.append(p)
+                done += len(mp3s) - len(unmatched)
                 for path in unmatched:
                     if self._closing:
                         break
+                    done += 1
                     a_, s_, f_ = self._fetch_and_add_single(
                         path, tag_cache, done, total
                     )
@@ -789,7 +909,10 @@ class LyricsBrowser(LyricsBaseApp):
     ) -> tuple[int, int, int, set[str]]:
         try:
             ss = self.genius.search_album(album, artist)
-        except Exception:
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "Album scan fetch failed for %s / %s: %s", artist, album, exc
+            )
             return 0, 0, len(mp3s), set()
         if not ss or not ss.tracks:
             return 0, 0, len(mp3s), set()
@@ -851,6 +974,8 @@ class LyricsBrowser(LyricsBaseApp):
             return 0, 0, len(mp3s), set()
 
         artist_name = _extract_name(getattr(ss, "artist", None), artist)
+        if not _artist_matches(artist, artist_name):
+            return 0, 0, len(mp3s), set()
         album_name = getattr(ss, "name", "").strip() or album
         album_year = _release_year(ss) or folder_year
 
@@ -890,7 +1015,7 @@ class LyricsBrowser(LyricsBaseApp):
         if not path_str:
             return
         path = Path(path_str)
-        artist, title, album = _read_mp3_tags(path)
+        artist, title, album, track_num = _read_mp3_info(path)
         if not artist or not title:
             mb.showerror(
                 "Import", f"Could not read artist/title tags from:\n{path.name}"
@@ -902,19 +1027,23 @@ class LyricsBrowser(LyricsBaseApp):
         self._set_busy(True)
         self._set_status(f"Importing: {title}…")
         threading.Thread(
-            target=self._run_import_file, args=(artist, title, album), daemon=True
+            target=self._run_import_file,
+            args=(artist, title, album, track_num),
+            daemon=True,
         ).start()
 
-    def _run_import_file(self, artist: str, title: str, album: str):
+    def _run_import_file(self, artist: str, title: str, album: str, track_num: int = 0):
         try:
             ss = self.genius.search_song(title, artist)
         except Exception as e:
             self._ui(self._set_busy, False)
             self._ui(mb.showerror, "Import Error", f"Could not fetch lyrics:\n{e}")
             return
-        self._ui(self._finish_import_file, ss, artist, title, album)
+        self._ui(self._finish_import_file, ss, artist, title, album, track_num)
 
-    def _finish_import_file(self, ss, artist: str, title: str, album: str):
+    def _finish_import_file(
+        self, ss, artist: str, title: str, album: str, track_num: int = 0
+    ):
         self._set_busy(False)
         if not ss:
             self._set_status(f"Not found: {title}")
@@ -922,11 +1051,14 @@ class LyricsBrowser(LyricsBaseApp):
         ss_album = getattr(ss, "album", {}) or {}
         album_name = album or ss_album.get("name", "")
         year = _release_year(ss_album)
-        self.catalog.add(ss.artist, ss.title, album_name, year, ss.to_text())
+        self.catalog.add(artist, title, album_name, year, ss.to_text(), track=track_num)
         self._refresh_tree()
-        self._set_status(f"Imported: {ss.title}", duration_ms=4000)
-        entry = self.catalog.get(ss.artist, ss.title)
+        self._set_status(f"Imported: {title}", duration_ms=4000)
+        entry = self.catalog.get(artist, title)
         if entry:
+            self._current_entry = entry
+            self._edit_btn.configure(state="normal")
+            self._copy_btn.configure(state="normal")
             self._show_entry(entry)
 
     # ── Settings persistence ──────────────────────────────────────────────────
@@ -942,13 +1074,234 @@ class LyricsBrowser(LyricsBaseApp):
         self._busy = busy
         self.master.configure(cursor="watch" if busy else "")
         if busy:
+            if self._editing:
+                self._cancel_edit()
+            self._progress.start(15)
             state = "disabled"
-        elif self.genius is not None:
-            state = "normal"
         else:
-            return
+            self._progress.stop()
+            if self.genius is not None:
+                state = "normal"
+            else:
+                return
         for btn in self._gated_buttons:
             btn.configure(state=state)
+
+    # ── Right-click context menu ──────────────────────────────────────────────
+
+    def _on_tree_right_click(self, event):
+        item = self.tree.identify_row(event.y)
+        if not item:
+            return
+        self.tree.selection_set(item)
+        tags = self.tree.item(item, "tags")
+
+        menu = tk.Menu(self.master, tearoff=0)
+        genius_available = self.genius is not None and not self._busy
+        if "song" in tags or "missing" in tags:
+            if genius_available:
+                menu.add_command(label="Update Lyrics", command=self._update_selected)
+                menu.add_separator()
+            menu.add_command(label="Remove Song", command=self._remove_selected)
+        elif "album" in tags:
+            if genius_available:
+                menu.add_command(
+                    label="Update Album Lyrics", command=self._update_selected
+                )
+                menu.add_separator()
+            menu.add_command(label="Remove Album", command=self._remove_selected)
+        elif "artist" in tags:
+            if genius_available:
+                menu.add_command(
+                    label="Update All Lyrics", command=self._update_selected
+                )
+                menu.add_separator()
+            menu.add_command(label="Remove Artist", command=self._remove_selected)
+
+        if menu.index("end") is not None:
+            menu.tk_popup(event.x_root, event.y_root)
+
+    # ── Export catalog ────────────────────────────────────────────────────────
+
+    def _export_catalog(self):
+        path_str = fd.asksaveasfilename(
+            title="Export catalog",
+            defaultextension=".json",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+            initialfile="lyrics_catalog.json",
+        )
+        if not path_str:
+            return
+        entries = self.catalog.all_entries()
+        content = json.dumps(
+            {
+                "version": 1,
+                "entries": {Catalog._key(e["artist"], e["title"]): e for e in entries},
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        try:
+            Path(path_str).write_text(content, encoding="utf-8")
+            self._set_status(
+                f"Exported {len(entries)} songs to {Path(path_str).name}",
+                duration_ms=5000,
+            )
+        except OSError as exc:
+            mb.showerror("Export Error", f"Could not write file:\n{exc}")
+
+    # ── Filter focus ──────────────────────────────────────────────────────────
+
+    def _focus_filter(self):
+        if self._filter_entry is None:
+            return
+        self._filter_focus_in(self._filter_entry)
+        self._filter_entry.focus_set()
+
+    # ── Copy to clipboard ─────────────────────────────────────────────────────
+
+    def _copy_lyrics(self):
+        content = self.lyrics_window.get("1.0", "end-1c")
+        if content.strip():
+            self.master.clipboard_clear()
+            self.master.clipboard_append(content)
+            self._set_status("Copied to clipboard.", duration_ms=3000)
+
+    # ── Fetch Missing ─────────────────────────────────────────────────────────
+
+    def _fetch_missing(self):
+        missing = [
+            e for e in self.catalog.all_entries() if not e.get("lyrics", "").strip()
+        ]
+        if not missing:
+            self._set_status("No songs with missing lyrics.", duration_ms=4000)
+            return
+        self._set_busy(True)
+        self._set_status(f"Fetching lyrics for {len(missing)} song(s)…")
+        threading.Thread(
+            target=self._run_fetch_missing, args=(missing,), daemon=True
+        ).start()
+
+    def _run_fetch_missing(self, entries: list):
+        added = failed = 0
+        for i, e in enumerate(entries, 1):
+            if self._closing:
+                break
+            self._ui(
+                self._set_status,
+                f"Fetching {i}/{len(entries)}: {e['artist']} – {e['title']}…",
+            )
+            try:
+                ss = self.genius.search_song(e["title"], e["artist"])
+            except Exception as exc:
+                logging.getLogger(__name__).warning(
+                    "Fetch missing failed for %s / %s: %s", e["artist"], e["title"], exc
+                )
+                failed += 1
+                continue
+            if ss:
+                ss_album = getattr(ss, "album", {}) or {}
+                self.catalog.add(
+                    e["artist"],
+                    e["title"],
+                    e.get("album") or ss_album.get("name", ""),
+                    e.get("year") or _release_year(ss_album),
+                    ss.to_text(),
+                    track=e.get("track", 0),
+                )
+                added += 1
+            else:
+                failed += 1
+        self._ui(self._set_busy, False)
+        self._ui(self._refresh_tree)
+        msg = f"Fetched {added} lyrics" + (f", {failed} not found" if failed else "")
+        self._ui(lambda m=msg: self._set_status(m, duration_ms=6000))
+
+    # ── Undo ──────────────────────────────────────────────────────────────────
+
+    def _push_undo(self, entries: list[dict]):
+        self._undo_stack.append(entries)
+
+    def _undo_remove(self):
+        if not self._undo_stack:
+            self._set_status("Nothing to undo.", duration_ms=3000)
+            return
+        entries = self._undo_stack.pop()
+        self.catalog.add_many(entries)
+        self._refresh_tree()
+        # Show the first restored entry in the viewer
+        first = self.catalog.get(entries[0]["artist"], entries[0]["title"])
+        if first:
+            self._current_entry = first
+            self._edit_btn.configure(state="normal")
+            self._copy_btn.configure(state="normal")
+            self._show_entry(first)
+        else:
+            self._current_entry = None
+            self._edit_btn.configure(state="disabled")
+            self._copy_btn.configure(state="disabled")
+            self._set_output("")
+        self._set_status(
+            f"Restored {len(entries)} song{'s' if len(entries) != 1 else ''}",
+            duration_ms=4000,
+        )
+
+    # ── Edit lyrics ───────────────────────────────────────────────────────────
+
+    def _toggle_edit(self):
+        if not self._editing:
+            if not self._current_entry:
+                return
+            self._editing = True
+            self._edit_btn.configure(text="Save")
+            self.lyrics_window.configure(state="normal")
+            self.lyrics_window.focus_set()
+        else:
+            self._save_edit()
+
+    def _cancel_edit(self):
+        self._editing = False
+        self._edit_btn.configure(text="Edit")
+        self.lyrics_window.configure(state="disabled")
+        if self._current_entry:
+            self._show_entry(self._current_entry)
+
+    def _save_edit(self):
+        if not self._current_entry:
+            self._cancel_edit()
+            return
+        full_text = self.lyrics_window.get("1.0", "end-1c")
+        if full_text.count(SEPARATOR) < 2:
+            mb.showwarning("Save", "Header was modified — cannot save.")
+            self._cancel_edit()
+            return
+        new_lyrics = self._extract_lyrics_from_display(full_text)
+        e = self._current_entry
+        self.catalog.add(
+            e["artist"],
+            e["title"],
+            e.get("album", ""),
+            e.get("year", ""),
+            new_lyrics,
+            track=e.get("track", 0),
+        )
+        self._current_entry = self.catalog.get(e["artist"], e["title"])
+        self._editing = False
+        self._edit_btn.configure(text="Edit")
+        self.lyrics_window.configure(state="disabled")
+        self._refresh_tree()
+        self._set_status(f"Saved: {e['title']}", duration_ms=4000)
+
+    def _extract_lyrics_from_display(self, text: str) -> str:
+        """Strip the header block to return only the lyrics portion."""
+        sep = SEPARATOR
+        first = text.find(sep)
+        if first == -1:
+            return text
+        second = text.find(sep, first + len(sep))
+        if second == -1:
+            return text
+        return text[second + len(sep) :].lstrip("\n")
 
 
 def main():
