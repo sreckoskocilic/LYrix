@@ -21,7 +21,6 @@ try:
         _detect_album,
         _extract_name,
         _read_mp3_info,
-        _read_mp3_tags,
         _release_year,
         _unpack_track,
         get_resource_path,
@@ -41,7 +40,6 @@ except ImportError:
         _detect_album,
         _extract_name,
         _read_mp3_info,
-        _read_mp3_tags,
         _release_year,
         _unpack_track,
         get_resource_path,
@@ -55,6 +53,30 @@ def _year_from_folder(name: str) -> str:
         if not rest or rest[0] in (" ", "-", "_", "."):
             return name[:4]
     return ""
+
+
+def _folder_album_info(
+    dir_path: Path, mp3s: list, tag_cache: dict
+) -> tuple[str, str] | None:
+    """Derive (artist, album) from the folder name + MP3 artist tags as a
+    fallback when tag-based album detection fails (e.g. tags absent or
+    inconsistent).  Returns None when the folder name is not informative."""
+    artists = [tag_cache[p][0] for p in mp3s if tag_cache[p][0]]
+    if not artists:
+        return None
+    artist = Counter(artists).most_common(1)[0][0]
+    name = dir_path.name.strip()
+    # Strip a leading year like "2001 - " or "2001_"
+    if len(name) >= 4 and name[:4].isdigit():
+        rest = name[4:].lstrip(" -_.")
+        if rest:
+            name = rest
+    # "Artist - Album" style → take the trailing segment as the album title
+    if " - " in name:
+        parts = name.split(" - ", 1)
+        if len(parts[1].strip()) >= 2:
+            name = parts[1].strip()
+    return (artist, name) if name else None
 
 
 def _build_track_entries(
@@ -812,6 +834,12 @@ class LyricsBrowser(LyricsBaseApp):
             self._ui(mb.showinfo, "Scan", f"All {len(mp3s)} MP3s already have lyrics.")
             return
 
+        # Group ALL mp3s by directory so album detection sees the full picture,
+        # even when most songs in a folder are already in the catalog.
+        all_by_dir: dict[Path, list[Path]] = {}
+        for p in mp3s:
+            all_by_dir.setdefault(p.parent, []).append(p)
+
         by_dir: dict[Path, list[Path]] = {}
         for p in need:
             by_dir.setdefault(p.parent, []).append(p)
@@ -823,7 +851,10 @@ class LyricsBrowser(LyricsBaseApp):
         for dir_path, dir_mp3s in by_dir.items():
             if self._closing:
                 break
-            album_info = _detect_album(dir_mp3s, tag_cache)
+            all_dir_mp3s = all_by_dir.get(dir_path, dir_mp3s)
+            album_info = _detect_album(all_dir_mp3s, tag_cache)
+            if not album_info:
+                album_info = _folder_album_info(dir_path, all_dir_mp3s, tag_cache)
             if album_info:
                 artist, album = album_info
                 try:
@@ -919,86 +950,102 @@ class LyricsBrowser(LyricsBaseApp):
         if not ss or not ss.tracks:
             return 0, 0, len(mp3s), set()
 
-        # Use cached tags to build wanted_titles; avoids a third parse of each file
-        if tag_cache is not None:
-            wanted_titles = {
-                (tag_cache[p][1] or "").strip().lower() for p in mp3s if p.exists()
-            }
-        else:
-            wanted_titles = {
-                (_read_mp3_tags(p)[1] or "").strip().lower() for p in mp3s if p.exists()
-            }
+        artist_name = _extract_name(getattr(ss, "artist", None), artist)
+        if not _artist_matches(artist, artist_name):
+            return 0, 0, len(mp3s), set()
 
-        matched_tracks: list[tuple[int | None, object]] = []
-        matched_mp3_titles: set[str] = set()
-        mp3_track_nums: dict[str, int] = {}
+        album_name = getattr(ss, "name", "").strip() or album
+        album_year = _release_year(ss) or folder_year
+
+        # Build lookup tables for local MP3 files: by tag title and by filename stem.
+        mp3_track_nums: dict[str, int] = {}  # tag_title_lower → track_num
+        mp3_stems: dict[str, str] = {}  # stem_lower → tag_title_lower
+
         for p in mp3s:
-            title = (
-                (tag_cache[p][1] or "").strip().lower()
-                if tag_cache
-                else (_read_mp3_tags(p)[1] or "").strip().lower()
-            )
-            track_num = tag_cache[p][3] if tag_cache else _read_mp3_info(p)[3]
-            mp3_track_nums[title] = track_num
+            info = tag_cache[p] if tag_cache is not None else _read_mp3_info(p)
+            title_lower = (info[1] or "").strip().lower()
+            track_num = info[3] if len(info) > 3 else 0
+            if title_lower:
+                mp3_track_nums[title_lower] = track_num
+            mp3_stems[p.stem.strip().lower()] = title_lower
 
-        remaining_wanted = set(wanted_titles)
+        remaining_titles = set(mp3_track_nums.keys())
+        remaining_stems = set(mp3_stems.keys())
+        matched_mp3_titles: set[str] = set()
+        entries_to_add: list[dict] = []
+
         for item in ss.tracks:
             num, track = _unpack_track(item)
-            track_title_lower = track.title.strip().lower()
+            track_title = track.title.strip()
+            track_title_lower = track_title.lower()
             resolved_num = (
                 num
                 if isinstance(num, int)
                 else (getattr(track, "number", None) or None)
             )
-            for wanted in list(remaining_wanted):
-                title_exact = wanted == track_title_lower
-                title_substr = (
-                    wanted in track_title_lower or track_title_lower in wanted
-                )
-                track_match = (
-                    resolved_num is not None
-                    and mp3_track_nums.get(wanted) == resolved_num
-                )
-                if title_exact:
-                    matched_tracks.append((resolved_num, track))
-                    matched_mp3_titles.add(wanted)
-                    remaining_wanted.discard(wanted)
-                    break
-                elif title_substr and track_match:
-                    matched_tracks.append((resolved_num, track))
-                    matched_mp3_titles.add(wanted)
-                    remaining_wanted.discard(wanted)
-                    break
+            track_num_val = resolved_num if isinstance(resolved_num, int) else 0
 
-        # If we couldn't confidently match most of the folder, let caller fall back to per-file.
-        if len(matched_tracks) < max(1, int(0.6 * len(mp3s))):
-            return 0, 0, len(mp3s), set()
+            matched_key: str | None = None
 
-        artist_name = _extract_name(getattr(ss, "artist", None), artist)
-        if not _artist_matches(artist, artist_name):
-            return 0, 0, len(mp3s), set()
-        album_name = getattr(ss, "name", "").strip() or album
-        album_year = _release_year(ss) or folder_year
+            # 1. Exact tag title match
+            if track_title_lower in remaining_titles:
+                matched_key = track_title_lower
+                remaining_titles.discard(matched_key)
+            else:
+                # 2. Substring + track-number match (handles partial titles like
+                #    "In Their Darkened Shrines: IV. Ruins" ↔ "Ruins")
+                for wanted in list(remaining_titles):
+                    title_substr = (
+                        wanted in track_title_lower or track_title_lower in wanted
+                    )
+                    track_match = (
+                        resolved_num is not None
+                        and mp3_track_nums.get(wanted) == resolved_num
+                    )
+                    if title_substr and track_match:
+                        matched_key = wanted
+                        remaining_titles.discard(matched_key)
+                        break
 
-        entries_to_add = []
-        for num, track in matched_tracks:
-            track_num = num if isinstance(num, int) else 0
+                if matched_key is None:
+                    # 3. Filename stem match (e.g. "01 - Walk This Way" ↔ "Walk This Way")
+                    for stem in list(remaining_stems):
+                        if track_title_lower in stem or stem in track_title_lower:
+                            tag_title_l = mp3_stems[stem]
+                            # Fall back to the stem itself when no tag title is set
+                            matched_key = tag_title_l if tag_title_l else stem
+                            remaining_stems.discard(stem)
+                            if tag_title_l:
+                                remaining_titles.discard(tag_title_l)
+                            break
+
+            if matched_key is not None:
+                lyrics = track.to_text()
+                matched_mp3_titles.add(matched_key)
+            else:
+                # No local MP3 found for this album track.  Don't overwrite an
+                # existing catalog entry that already carries lyrics.
+                existing = self.catalog.get(artist_name, track_title, album_name)
+                if existing and existing.get("lyrics", "").strip():
+                    continue
+                lyrics = ""
+
             entries_to_add.append(
                 {
                     "artist": artist_name,
-                    "title": track.title,
+                    "title": track_title,
                     "album": album_name,
                     "year": album_year,
-                    "lyrics": track.to_text(),
-                    "track": track_num,
+                    "lyrics": lyrics,
+                    "track": track_num_val,
                 }
             )
+
         self.catalog.add_many(entries_to_add)
 
-        added = len(matched_tracks)
-        skipped = 0  # unmatched files are retried individually by the caller
-        failed = 0  # Only count genuine API failures here; fallbacks handle misses.
-        return added, skipped, failed, matched_mp3_titles
+        with_lyrics = sum(1 for e in entries_to_add if e["lyrics"])
+        without_lyrics = sum(1 for e in entries_to_add if not e["lyrics"])
+        return with_lyrics, without_lyrics, 0, matched_mp3_titles
 
     def _on_scan_done(self, added, skipped, failed, total):
         self._set_busy(False)
