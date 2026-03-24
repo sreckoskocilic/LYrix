@@ -372,6 +372,47 @@ class CatalogTests(unittest.TestCase):
             self.assertIsNotNone(remaining)
             self.assertEqual(remaining["album"], "Album B")
 
+    def test_find_returns_entry_across_any_album(self):
+        """find() locates a song regardless of which album it was stored under."""
+        with TemporaryDirectory() as tmp:
+            cat = Catalog(Path(tmp) / "catalog.json")
+            cat.add("Artist", "Song", "Album X", "2020", "some lyrics")
+            result = cat.find("Artist", "Song")
+            self.assertIsNotNone(result)
+            self.assertEqual(result["album"], "Album X")
+
+    def test_find_prefers_entry_with_lyrics(self):
+        """find() returns the entry that has lyrics when multiple albums exist."""
+        with TemporaryDirectory() as tmp:
+            cat = Catalog(Path(tmp) / "catalog.json")
+            cat.add("Artist", "Song", "Album A", "", "")  # no lyrics
+            cat.add("Artist", "Song", "Album B", "", "real lyrics")
+            result = cat.find("Artist", "Song")
+            self.assertIsNotNone(result)
+            self.assertEqual(result["album"], "Album B")
+
+    def test_find_returns_none_when_not_found(self):
+        with TemporaryDirectory() as tmp:
+            cat = Catalog(Path(tmp) / "catalog.json")
+            self.assertIsNone(cat.find("Ghost", "Nobody"))
+
+    def test_find_returns_first_entry_when_none_have_lyrics(self):
+        """find() returns the first match when no entry carries lyrics."""
+        with TemporaryDirectory() as tmp:
+            cat = Catalog(Path(tmp) / "catalog.json")
+            cat.add("Artist", "Song", "Album A", "", "")
+            result = cat.find("Artist", "Song")
+            self.assertIsNotNone(result)
+            self.assertEqual(result["album"], "Album A")
+
+    def test_find_is_case_insensitive(self):
+        with TemporaryDirectory() as tmp:
+            cat = Catalog(Path(tmp) / "catalog.json")
+            cat.add("The Beatles", "Hey Jude", "Past Masters", "", "na na na")
+            result = cat.find("the beatles", "hey jude")
+            self.assertIsNotNone(result)
+            self.assertEqual(result["title"], "Hey Jude")
+
 
 if __name__ == "__main__":
     unittest.main()

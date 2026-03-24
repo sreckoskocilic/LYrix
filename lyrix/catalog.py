@@ -22,6 +22,7 @@ CATALOG_PATH = _BASE_DIR / "lyrics_catalog.json"
 
 SEPARATOR = "=" * 40
 FONT_NAME = "Roboto Mono for Powerline"
+SONGS_CATEGORY = "Songs"
 
 
 def get_resource_path(relative_path):
@@ -33,13 +34,28 @@ def _release_year(album_data) -> str:
     """Extract a 4-digit year string from a Genius album dict or object."""
     if album_data is None:
         return ""
+    # Prefer release_date_components (datetime or dict with 'year')
+    rdc = (
+        album_data.get("release_date_components")
+        if isinstance(album_data, dict)
+        else getattr(album_data, "release_date_components", None)
+    )
+    if rdc is not None:
+        if isinstance(rdc, dict):
+            year = rdc.get("year")
+            if year:
+                return str(year)
+        else:
+            year = getattr(rdc, "year", None)
+            if year:
+                return str(year)
+    # Fallback: release_date_for_display string
     if isinstance(album_data, dict):
         release_date = album_data.get("release_date_for_display", "") or ""
     else:
         release_date = getattr(album_data, "release_date_for_display", "") or ""
     if not release_date:
         return ""
-    # Fast-path: plain 4-digit year (most common case)
     if len(release_date) == 4 and release_date.isdigit():
         return release_date
     for fmt in ("%B %d, %Y", "%B %Y"):
@@ -179,6 +195,7 @@ class Catalog:
         self._path = path
         self._data: dict = {}
         self._lock = Lock()
+        self._title_index: dict[tuple, list[str]] = {}
         self._load()
 
     def _load(self):
@@ -186,18 +203,16 @@ class Catalog:
             try:
                 raw = json.loads(self._path.read_text(encoding="utf-8"))
                 data = raw.get("entries", {})
-                migrated = {}
                 needs_save = False
-                for key, entry in data.items():
-                    if key.count("\t") == 1:
-                        album_lower = (entry.get("album") or "").lower().strip()
-                        migrated[f"{key}\t{album_lower}"] = entry
-                        needs_save = True
-                    else:
-                        migrated[key] = entry
-                self._data = migrated
+                for old_key in [k for k in data if k.count("\t") == 1]:
+                    entry = data.pop(old_key)
+                    album_lower = (entry.get("album") or "").lower().strip()
+                    data[f"{old_key}\t{album_lower}"] = entry
+                    needs_save = True
+                self._data = data
                 if needs_save:
                     self._save()
+                self._rebuild_index()
             except Exception as exc:
                 logging.getLogger(__name__).error(
                     "Catalog at %s is unreadable (%s) — starting empty; "
@@ -234,6 +249,15 @@ class Catalog:
     def _key(artist: str, title: str, album: str = "") -> str:
         return f"{artist.lower().strip()}\t{title.lower().strip()}\t{(album or '').lower().strip()}"
 
+    def _rebuild_index(self):
+        """Rebuild the secondary title index for fast lookups."""
+        self._title_index.clear()
+        for key in self._data:
+            parts = key.split("\t")
+            if len(parts) >= 2:
+                artist_title = (parts[0], parts[1])
+                self._title_index.setdefault(artist_title, []).append(key)
+
     def add(
         self,
         artist: str,
@@ -246,6 +270,7 @@ class Catalog:
         with self._lock:
             key = self._key(artist, title, album)
             existing_added = self._data.get(key, {}).get("added", "")
+            is_new = key not in self._data
             self._data[key] = {
                 "artist": artist,
                 "title": title,
@@ -255,6 +280,9 @@ class Catalog:
                 "lyrics": lyrics,
                 "added": existing_added or datetime.now().isoformat(timespec="seconds"),
             }
+            if is_new:
+                parts = key.split("\t")
+                self._title_index.setdefault((parts[0], parts[1]), []).append(key)
             self._save()
 
     def add_many(self, entries: list[dict]):
@@ -266,6 +294,7 @@ class Catalog:
             for e in entries:
                 key = self._key(e["artist"], e["title"], e.get("album", ""))
                 existing_added = self._data.get(key, {}).get("added", "")
+                is_new = key not in self._data
                 self._data[key] = {
                     "artist": e["artist"],
                     "title": e["title"],
@@ -273,27 +302,58 @@ class Catalog:
                     "year": e.get("year") or "",
                     "track": e.get("track", 0),
                     "lyrics": e["lyrics"],
-                    "added": existing_added or now,
+                    "added": existing_added or e.get("added") or now,
                 }
+                if is_new:
+                    parts = key.split("\t")
+                    self._title_index.setdefault((parts[0], parts[1]), []).append(key)
             self._save()
 
     def get(self, artist: str, title: str, album: str = ""):
         with self._lock:
             return self._data.get(self._key(artist, title, album))
 
+    def find(self, artist: str, title: str):
+        """Return the first entry matching artist+title across any album.
+
+        Prefers entries that carry lyrics. Use this instead of get() when the
+        album name is not known (e.g. cache-check in the search UI)."""
+        at = (artist.lower().strip(), title.lower().strip())
+        with self._lock:
+            keys = self._title_index.get(at, [])
+            if not keys:
+                return None
+            matches = [self._data[k] for k in keys if k in self._data]
+        if not matches:
+            return None
+        for m in matches:
+            if m.get("lyrics", "").strip():
+                return m
+        return matches[0]
+
     def remove(self, artist: str, title: str, album: str = ""):
         with self._lock:
             if album:
                 key = self._key(artist, title, album)
                 if key in self._data:
+                    parts = key.split("\t")
+                    at = (parts[0], parts[1])
+                    if at in self._title_index:
+                        self._title_index[at] = [
+                            k for k in self._title_index[at] if k != key
+                        ]
+                        if not self._title_index[at]:
+                            del self._title_index[at]
                     del self._data[key]
                     self._save()
             else:
-                prefix = f"{artist.lower().strip()}\t{title.lower().strip()}\t"
-                keys = [k for k in self._data if k.startswith(prefix)]
+                at = (artist.lower().strip(), title.lower().strip())
+                keys = self._title_index.get(at, [])
                 for k in keys:
-                    del self._data[k]
+                    if k in self._data:
+                        del self._data[k]
                 if keys:
+                    del self._title_index[at]
                     self._save()
 
     def remove_entries(self, pairs: list) -> int:
@@ -301,10 +361,13 @@ class Catalog:
         removed = 0
         with self._lock:
             for artist, title in pairs:
-                prefix = f"{artist.lower().strip()}\t{title.lower().strip()}\t"
-                keys = [k for k in self._data if k.startswith(prefix)]
+                at = (artist.lower().strip(), title.lower().strip())
+                keys = self._title_index.get(at, [])
                 for k in keys:
-                    del self._data[k]
+                    if k in self._data:
+                        del self._data[k]
+                if keys:
+                    del self._title_index[at]
                 removed += len(keys)
             if removed:
                 self._save()
@@ -317,6 +380,14 @@ class Catalog:
             for artist, title, album in triples:
                 key = self._key(artist, title, album)
                 if key in self._data:
+                    parts = key.split("\t")
+                    at = (parts[0], parts[1])
+                    if at in self._title_index:
+                        self._title_index[at] = [
+                            k for k in self._title_index[at] if k != key
+                        ]
+                        if not self._title_index[at]:
+                            del self._title_index[at]
                     del self._data[key]
                     removed += 1
             if removed:
@@ -332,6 +403,14 @@ class Catalog:
                 if v["artist"].lower().strip() == artist_lower
             ]
             for k in keys:
+                parts = k.split("\t")
+                at = (parts[0], parts[1])
+                if at in self._title_index:
+                    self._title_index[at] = [
+                        key for key in self._title_index[at] if key != k
+                    ]
+                    if not self._title_index[at]:
+                        del self._title_index[at]
                 del self._data[k]
             if keys:
                 self._save()
@@ -362,6 +441,7 @@ class Catalog:
             raw = json.loads(self._path.read_text(encoding="utf-8"))
             with self._lock:
                 self._data = raw.get("entries", {})
+                self._rebuild_index()
         except Exception:
             pass  # keep existing in-memory data on read error
 

@@ -24,12 +24,20 @@ LOG_PATH = _BASE_DIR / "lyrix.log"
 def _setup_logging():
     """Configure logging to file."""
     _BASE_DIR.mkdir(parents=True, exist_ok=True)
+
+    class NoLyricsFilter(logging.Filter):
+        def filter(self, record):
+            return "Couldn't find the lyrics section" not in record.getMessage()
+
+    stream_handler = logging.StreamHandler()
+    stream_handler.addFilter(NoLyricsFilter())
+
     logging.basicConfig(
         level=logging.WARNING,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         handlers=[
             logging.FileHandler(LOG_PATH),
-            logging.StreamHandler(),
+            stream_handler,
         ],
     )
 

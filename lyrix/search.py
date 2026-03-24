@@ -14,6 +14,7 @@ try:
         CATALOG_PATH,
         FONT_NAME,
         SEPARATOR,
+        SONGS_CATEGORY,
         _extract_name,
         _release_year,
         _song_header,
@@ -161,13 +162,13 @@ class LyricsApp(LyricsBaseApp):
     def _handle_fetch_result(self, exc, result, render, valid=bool):
         if self._closing:
             return
+        self._set_busy(False)
         if exc:
             mb.showerror("Error", f"Genius request failed:\n{exc}")
         elif not valid(result):
             self._set_status("No lyrics found.")
         else:
             render(result)
-        self._set_busy(False)
 
     def _schedule_result(self, exc, result, render, valid=bool):
         self._ui(self._handle_fetch_result, exc, result, render, valid)
@@ -183,7 +184,7 @@ class LyricsApp(LyricsBaseApp):
         self.album_entry.delete(0, tk.END)
         # Serve from catalog if available — no network call needed
         self.catalog.reload()
-        cached = self.catalog.get(artist, song)
+        cached = self.catalog.find(artist, song)
         if cached and cached.get("lyrics", "").strip():
             self._render_cached_song(cached)
             return
@@ -226,6 +227,8 @@ class LyricsApp(LyricsBaseApp):
         album = getattr(ss, "album", {}) or {}
         year = _release_year(album)
         album_name = album.get("name", "")
+        if not album_name:
+            album_name = SONGS_CATEGORY
         self._set_output(_song_header(ss) + lyrics)
         self.catalog.add(ss.artist, ss.title, album_name, year, lyrics)
         self.default_filename = ss.title.strip() or "lyrics"
@@ -274,7 +277,7 @@ class LyricsApp(LyricsBaseApp):
         )
         parts = []
         for e in tracks:
-            num = e.get("track") or None
+            num = e.get("track")
             prefix = f"{num}. " if num else ""
             parts.append(
                 f"{SEPARATOR}\n{prefix}{e['title']}\n{SEPARATOR}\n{e['lyrics']}\n\n\n"

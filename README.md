@@ -1,7 +1,7 @@
 # Lyrix
 
 [![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/tests-34%20passed-green.svg)](https://github.com/skocho/lyrix/actions)
+[![Tests](https://img.shields.io/badge/tests-72%20passed-green.svg)](https://github.com/skocho/lyrix/actions)
 [![Coverage](https://img.shields.io/badge/coverage-100%25-green.svg)](https://github.com/skocho/lyrix/actions)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
@@ -100,4 +100,4 @@ pyinstaller LyricsBrowser-macOS.spec
 
 Produces `dist/LyricsBrowser.app`.
 
-The catalog and settings files are always read from and written to the directory containing the executable.
+The catalog and settings files are stored in the standard data directory (`~/.lyrix/` on macOS/Linux, `%APPDATA%\Lyrix\` on Windows).
