@@ -6,7 +6,7 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from lyrix.catalog import Catalog, _artist_matches, _detect_album, _release_year
+from lyrix.catalog import Catalog, _release_year
 
 
 class ReleaseYearTests(unittest.TestCase):
@@ -31,56 +31,6 @@ class ReleaseYearTests(unittest.TestCase):
             release_date_components=rdc, release_date_for_display="January 01, 2005"
         )
         self.assertEqual(_release_year(album), "2005")
-
-
-class DetectAlbumTests(unittest.TestCase):
-    def test_detect_album_reaches_seventy_percent(self):
-        mp3s = [Path(f"track_{i}.mp3") for i in range(5)]
-
-        def fake_tags(path):
-            idx = int(path.stem.split("_")[1])
-            if idx < 4:
-                return ("Artist", f"Title {idx}", "Album A")
-            return ("Artist", f"Title {idx}", "Album B")
-
-        with patch("lyrix.catalog._read_mp3_tags", side_effect=fake_tags):
-            artist, album = _detect_album(mp3s) or (None, None)
-            self.assertEqual(artist, "Artist")
-            self.assertEqual(album, "Album A")
-
-    def test_detect_album_below_threshold_returns_none(self):
-        mp3s = [Path(f"track_{i}.mp3") for i in range(3)]
-
-        def fake_tags(path):
-            idx = int(path.stem.split("_")[1])
-            if idx == 0:
-                return ("Artist", "Title 0", "Album A")
-            return ("Artist", f"Title {idx}", "Album B")
-
-        with patch("lyrix.catalog._read_mp3_tags", side_effect=fake_tags):
-            self.assertIsNone(_detect_album(mp3s))
-
-
-class ArtistMatchesTests(unittest.TestCase):
-    def test_exact_match(self):
-        self.assertTrue(_artist_matches("Nile", "Nile"))
-        self.assertTrue(_artist_matches("Nile", "nile"))
-
-    def test_no_match_empty(self):
-        self.assertFalse(_artist_matches("", "Nile"))
-        self.assertFalse(_artist_matches("Nile", ""))
-        self.assertFalse(_artist_matches("", ""))
-
-    def test_close_match(self):
-        self.assertTrue(_artist_matches("Nile", "Nile "))
-        self.assertTrue(_artist_matches("Nile", "NILE"))
-
-    def test_different_artists(self):
-        self.assertFalse(_artist_matches("Nile", "Other Artist"))
-        self.assertFalse(_artist_matches("Nile", "Nile Rodgers"))
-
-    def test_threshold_80_percent(self):
-        self.assertFalse(_artist_matches("Nile", "Nile Rodgers"))
 
 
 class CatalogTests(unittest.TestCase):
@@ -472,6 +422,77 @@ class CatalogTests(unittest.TestCase):
             result = cat.find("the beatles", "hey jude")
             self.assertIsNotNone(result)
             self.assertEqual(result["title"], "Hey Jude")
+
+    def test_find_album_returns_all_entries(self):
+        with TemporaryDirectory() as tmp:
+            cat = Catalog(Path(tmp) / "catalog.json")
+            cat.add("Artist", "One", "Album", "2020", "lyrics1")
+            cat.add("Artist", "Two", "Album", "2020", "lyrics2")
+            cat.add("Artist", "Three", "Other", "2020", "lyrics3")
+            results = cat.find_album("Artist", "Album")
+            self.assertEqual(len(results), 2)
+            self.assertEqual({e["title"] for e in results}, {"One", "Two"})
+
+    def test_find_album_case_insensitive(self):
+        with TemporaryDirectory() as tmp:
+            cat = Catalog(Path(tmp) / "catalog.json")
+            cat.add("Artist", "Song", "Album", "", "lyrics")
+            results = cat.find_album("artist", "album")
+            self.assertEqual(len(results), 1)
+
+    def test_find_album_empty_when_not_found(self):
+        with TemporaryDirectory() as tmp:
+            cat = Catalog(Path(tmp) / "catalog.json")
+            cat.add("Artist", "Song", "Album", "", "lyrics")
+            results = cat.find_album("Other", "Album")
+            self.assertEqual(len(results), 0)
+
+    def test_find_duplicates_returns_groups(self):
+        with TemporaryDirectory() as tmp:
+            cat = Catalog(Path(tmp) / "catalog.json")
+            cat.add("Artist", "Song", "Album A", "", "lyrics A")
+            cat.add("Artist", "Song", "Album B", "", "lyrics B")
+            cat.add("Artist", "Other", "Album A", "", "lyrics")
+            duplicates = cat.find_duplicates()
+            self.assertEqual(len(duplicates), 1)
+            self.assertEqual(len(duplicates[0]), 2)
+
+    def test_find_duplicates_ignores_entries_without_lyrics(self):
+        with TemporaryDirectory() as tmp:
+            cat = Catalog(Path(tmp) / "catalog.json")
+            cat.add("Artist", "Song", "Album A", "", "")
+            cat.add("Artist", "Song", "Album B", "", "lyrics")
+            duplicates = cat.find_duplicates()
+            self.assertEqual(len(duplicates), 0)
+
+    def test_find_duplicates_empty_when_no_duplicates(self):
+        with TemporaryDirectory() as tmp:
+            cat = Catalog(Path(tmp) / "catalog.json")
+            cat.add("Artist", "One", "Album", "", "lyrics")
+            cat.add("Artist", "Two", "Album", "", "lyrics")
+            duplicates = cat.find_duplicates()
+            self.assertEqual(len(duplicates), 0)
+
+    def test_export_csv(self):
+        with TemporaryDirectory() as tmp:
+            cat = Catalog(Path(tmp) / "catalog.json")
+            cat.add("Artist", "Song", "Album", "2020", "lyrics", track=1)
+            csv_path = Path(tmp) / "export.csv"
+            count = cat.export_csv(csv_path)
+            self.assertEqual(count, 1)
+            content = csv_path.read_text(encoding="utf-8")
+            self.assertIn("artist", content)
+            self.assertIn("Artist", content)
+            self.assertIn("Song", content)
+
+    def test_export_csv_empty_catalog(self):
+        with TemporaryDirectory() as tmp:
+            cat = Catalog(Path(tmp) / "catalog.json")
+            csv_path = Path(tmp) / "export.csv"
+            count = cat.export_csv(csv_path)
+            self.assertEqual(count, 0)
+            content = csv_path.read_text(encoding="utf-8")
+            self.assertIn("artist", content)  # header still present
 
 
 if __name__ == "__main__":

@@ -2,9 +2,7 @@ import json
 import logging
 import os
 import sys
-from collections import Counter
 from datetime import datetime
-from difflib import SequenceMatcher
 from pathlib import Path
 from threading import Lock
 
@@ -95,94 +93,6 @@ def _format_track(item):
     num, track = _unpack_track(item)
     prefix = f"{num}. " if num is not None else ""
     return f"{SEPARATOR}\n{prefix}{track.title}\n{SEPARATOR}\n{track.to_text()}\n\n\n"
-
-
-def _read_mp3_info(path: Path) -> tuple[str, str, str, int]:
-    """Return (artist, title, album, track_num) from ID3 tags in a single parse."""
-    try:
-        from mutagen.mp3 import MP3
-
-        audio = MP3(str(path))
-        if audio.tags:
-
-            def tag(key):
-                v = audio.tags.get(key)
-                return str(v.text[0]).strip() if v and v.text else ""
-
-            artist = tag("TPE1") or tag("TPE2")
-            title = tag("TIT2")
-            album = tag("TALB")
-            trck = audio.tags.get("TRCK")
-            track_num = 0
-            if trck and trck.text:
-                try:
-                    track_num = int(str(trck.text[0]).split("/")[0].strip())
-                except (ValueError, IndexError):
-                    pass
-            return artist, title, album, track_num
-    except Exception:
-        pass
-    stem = path.stem
-    if " - " in stem:
-        parts = stem.split(" - ", 1)
-        return parts[0].strip(), parts[1].strip(), "", 0
-    return "", stem, "", 0
-
-
-def _read_mp3_tags(path: Path) -> tuple[str, str, str]:
-    """Return (artist, title, album) from ID3 tags, falling back to filename parsing."""
-    info = _read_mp3_info(path)
-    return info[0], info[1], info[2]
-
-
-def _read_mp3_track_num(path: Path) -> int:
-    """Return the track number from the TRCK ID3 tag, or 0 if unavailable."""
-    return _read_mp3_info(path)[3]
-
-
-def _detect_album(mp3s: list, tag_cache: dict | None = None) -> tuple[str, str] | None:
-    """Return (artist, album) if ≥70% of files share the same album tag, else None."""
-    if tag_cache is not None:
-        tags = [(tag_cache[p][0], tag_cache[p][1], tag_cache[p][2]) for p in mp3s]
-    else:
-        tags = [_read_mp3_tags(p) for p in mp3s]
-    valid = [(a, al) for a, _, al in tags if a and al]
-    if not valid or len(valid) < max(2, len(mp3s) * 0.7):
-        return None
-    valid_lower = [(a.lower(), al.lower(), a, al) for a, al in valid]
-    album_counts = Counter(al_l for _, al_l, _, _ in valid_lower)
-    top_album, top_count = album_counts.most_common(1)[0]
-    if top_count / len(valid) < 0.7:
-        return None
-    # Build matching list and capture album_name in one pass (avoids a third pass via next())
-    matching = []
-    album_name = None
-    name_map: dict[str, str] = {}
-    for a_l, al_l, a, al in valid_lower:
-        if al_l == top_album:
-            matching.append((a_l, a))
-            name_map.setdefault(a_l, a)
-            if album_name is None:
-                album_name = al
-    if not matching:
-        return None  # pragma: no cover - defensive check, nearly impossible to trigger
-    artist_counts = Counter(a_l for a_l, _ in matching)
-    top_artist = artist_counts.most_common(1)[0][0]
-    artist_name = name_map[top_artist]
-    return artist_name, album_name
-
-
-def _artist_matches(expected: str, actual: str, threshold: float = 0.8) -> bool:
-    """Check if actual artist reasonably matches expected artist using fuzzy matching."""
-    if not expected or not actual:
-        return False
-
-    expected_norm = expected.lower().strip()
-    actual_norm = actual.lower().strip()
-    if expected_norm == actual_norm:
-        return True
-    ratio = SequenceMatcher(None, expected_norm, actual_norm).ratio()
-    return ratio >= threshold
 
 
 # ── Catalog ───────────────────────────────────────────────────────────────────
@@ -331,6 +241,31 @@ class Catalog:
                 return m
         return matches[0]
 
+    def find_album(self, artist: str, album: str) -> list[dict]:
+        """Return all entries for a given (artist, album) pair."""
+        al = artist.lower().strip()
+        alb = album.lower().strip()
+        with self._lock:
+            return [
+                e
+                for e in self._data.values()
+                if e["artist"].lower().strip() == al
+                and (e.get("album") or "").lower().strip() == alb
+            ]
+
+    def find_duplicates(self) -> list[dict]:
+        """Return entries where the same (artist, title) appears under multiple albums with lyrics."""
+        with self._lock:
+            groups: dict[tuple, list[dict]] = {}
+            for key, entry in self._data.items():
+                if not entry.get("lyrics", "").strip():
+                    continue
+                parts = key.split("\t")
+                if len(parts) >= 2:
+                    at = (parts[0], parts[1])
+                    groups.setdefault(at, []).append(entry)
+        return [entries for entries in groups.values() if len(entries) > 1]
+
     def remove(self, artist: str, title: str, album: str = ""):
         with self._lock:
             if album:
@@ -445,10 +380,25 @@ class Catalog:
         except Exception:
             pass  # keep existing in-memory data on read error
 
-    def all_entries(self):
+    def all_entries(self) -> list[dict]:
         with self._lock:
             return list(self._data.values())
 
-    def __len__(self):
+    def export_csv(self, path) -> int:
+        """Export catalog to CSV file. Returns number of rows written."""
+        import csv
+
+        entries = self.all_entries()
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(
+                f,
+                fieldnames=["artist", "title", "album", "year", "track", "lyrics"],
+                extrasaction="ignore",
+            )
+            writer.writeheader()
+            writer.writerows(entries)
+        return len(entries)
+
+    def __len__(self) -> int:
         with self._lock:
             return len(self._data)

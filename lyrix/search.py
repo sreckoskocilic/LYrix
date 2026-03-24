@@ -7,8 +7,10 @@ import tkinter.scrolledtext as st
 from pathlib import Path
 from tkinter import ttk
 
+import ttkbootstrap as tb
+
 try:
-    from .base_app import LyricsBaseApp
+    from .base_app import LyricsBaseApp, THEME_BG, THEME_FG, THEME_SELECTBG
     from .catalog import (
         Catalog,
         CATALOG_PATH,
@@ -27,12 +29,13 @@ except ImportError:
     import sys
 
     sys.path.append(str(pathlib.Path(__file__).resolve().parent.parent))
-    from base_app import LyricsBaseApp  # type: ignore
+    from base_app import LyricsBaseApp, THEME_BG, THEME_FG, THEME_SELECTBG  # type: ignore
     from catalog import (  # type: ignore
         Catalog,
         CATALOG_PATH,
         FONT_NAME,
         SEPARATOR,
+        SONGS_CATEGORY,
         _extract_name,
         _release_year,
         _song_header,
@@ -51,7 +54,7 @@ class LyricsApp(LyricsBaseApp):
         self.catalog = Catalog(CATALOG_PATH)
 
         self._load_custom_font()
-        self._apply_base_styles()
+
         settings = self._read_settings()
         self._restore_font_size(settings)
         self._build_ui()
@@ -88,11 +91,11 @@ class LyricsApp(LyricsBaseApp):
             frame,
             height=30,
             font=(FONT_NAME, self._font_size),
-            fg=self.ACCENT,
-            bg="black",
-            selectbackground=self.BTN_BG,
-            selectforeground=self.ACCENT,
-            insertbackground=self.ACCENT,
+            fg=THEME_FG,
+            bg=THEME_BG,
+            selectbackground=THEME_SELECTBG,
+            selectforeground=THEME_FG,
+            insertbackground=THEME_FG,
             borderwidth=0,
             relief="flat",
             padx=8,
@@ -365,10 +368,8 @@ def main():
     import dotenv
 
     dotenv.load_dotenv(get_resource_path(".env"), override=True)
-    root = tk.Tk()
+    root = tb.Window(themename="darkly")
     root.title("Lyrics Search")
-    root.option_add("*TCombobox*Listbox*Background", LyricsApp.ENTRY_BG)
-    root.option_add("*TCombobox*Listbox*Foreground", LyricsApp.FG)
     LyricsApp(root)
     root.mainloop()
 

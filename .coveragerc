@@ -1,6 +1,8 @@
 [run]
 omit =
     lyrix/browser.py
+    lyrix/browser_actions.py
+    lyrix/browser_search.py
     lyrix/search.py
     lyrix/base_app.py
     lyrix/__main__.py

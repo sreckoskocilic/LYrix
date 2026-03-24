@@ -1,5 +1,5 @@
 lyricsgenius
-mutagen
 python-dotenv
 pyglet
+ttkbootstrap
 rumps; sys_platform == "darwin"

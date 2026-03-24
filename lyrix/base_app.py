@@ -1,9 +1,9 @@
 import json
 import logging
+import logging.handlers
 import os
 import sys
 import tkinter as tk
-from tkinter import ttk
 
 try:
     from .catalog import ENV_ABS_PATH, FONT_NAME, _BASE_DIR, get_resource_path
@@ -20,24 +20,24 @@ except ImportError:
 _SETTINGS_PATH = _BASE_DIR / "settings.json"
 LOG_PATH = _BASE_DIR / "lyrix.log"
 
+# Darkly theme colors (for ScrolledText and other tk widgets)
+THEME_BG = "#222222"
+THEME_FG = "#cdd6f4"  # Softer white (Catppuccin-inspired)
+THEME_SELECTBG = "#555555"
+THEME_INPUTBG = "#2f2f2f"
+
 
 def _setup_logging():
-    """Configure logging to file."""
+    """Configure logging to file with rotation (max 256 KB, keep 1 backup)."""
     _BASE_DIR.mkdir(parents=True, exist_ok=True)
 
-    class NoLyricsFilter(logging.Filter):
-        def filter(self, record):
-            return "Couldn't find the lyrics section" not in record.getMessage()
-
-    stream_handler = logging.StreamHandler()
-    stream_handler.addFilter(NoLyricsFilter())
-
     logging.basicConfig(
-        level=logging.WARNING,
+        level=logging.ERROR,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         handlers=[
-            logging.FileHandler(LOG_PATH),
-            stream_handler,
+            logging.handlers.RotatingFileHandler(
+                LOG_PATH, maxBytes=256 * 1024, backupCount=1, encoding="utf-8"
+            ),
         ],
     )
 
@@ -51,13 +51,6 @@ def _year_sort(year_str: str) -> int:
 
 
 class LyricsBaseApp:
-    BG = "#1e1e2e"
-    FG = "#cdd6f4"
-    ACCENT = "#2ff022"
-    ENTRY_BG = "#313244"
-    BTN_BG = "#45475a"
-    BTN_ACTIVE = "#585b70"
-
     FONT_SIZE_DEFAULT = 11
     FONT_SIZE_MIN = 6
     FONT_SIZE_MAX = 32
@@ -65,7 +58,6 @@ class LyricsBaseApp:
     def __init__(self, master):
         _setup_logging()
         self.master = master
-        self.master.configure(bg=self.BG)
         self._busy = False
         self._closing = False
         self._status_after_id = None
@@ -84,25 +76,6 @@ class LyricsBaseApp:
         if sys.platform == "win32":
             pyglet.options["win32_gdi_font"] = True
         pyglet.font.add_file(str(font_path))
-
-    # ── Styles ────────────────────────────────────────────────────────────────
-
-    def _apply_base_styles(self):
-        s = ttk.Style(self.master)
-        s.theme_use("clam")
-        s.configure(
-            ".", background=self.BG, foreground=self.FG, fieldbackground=self.ENTRY_BG
-        )
-        s.configure("TLabel", font=(FONT_NAME, 11), padding=(4, 2))
-        s.configure("TEntry", padding=4)
-        s.configure(
-            "TButton",
-            font=(FONT_NAME, 10),
-            padding=(12, 4),
-            background=self.BTN_BG,
-            foreground=self.FG,
-        )
-        s.map("TButton", background=[("active", self.BTN_ACTIVE)])
 
     # ── Font size ─────────────────────────────────────────────────────────────
 
@@ -144,6 +117,16 @@ class LyricsBaseApp:
         from lyricsgenius import Genius
 
         return Genius(token, verbose=False, timeout=10)
+
+    def _require_genius_client(self) -> bool:
+        if self.genius is None:
+            import tkinter.messagebox as mb
+
+            mb.showerror(
+                "Error", "GENIUS_TOKEN is missing, so Genius searches are disabled."
+            )
+            return False
+        return True
 
     # ── Output & status ───────────────────────────────────────────────────────
 
