@@ -3,9 +3,34 @@ import threading
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from unittest.mock import patch
 
-from lyrix.catalog import Catalog, _artist_matches, _detect_album
+from lyrix.catalog import Catalog, _artist_matches, _detect_album, _release_year
+
+
+class ReleaseYearTests(unittest.TestCase):
+    def test_rdc_dict_with_year(self):
+        album = {"release_date_components": {"year": 1994}}
+        self.assertEqual(_release_year(album), "1994")
+
+    def test_rdc_dict_with_no_year(self):
+        album = {"release_date_components": {}, "release_date_for_display": "2001"}
+        self.assertEqual(_release_year(album), "2001")
+
+    def test_rdc_object_with_year(self):
+        rdc = SimpleNamespace(year=2001)
+        album = SimpleNamespace(
+            release_date_components=rdc, release_date_for_display=""
+        )
+        self.assertEqual(_release_year(album), "2001")
+
+    def test_rdc_object_with_no_year(self):
+        rdc = SimpleNamespace(year=None)
+        album = SimpleNamespace(
+            release_date_components=rdc, release_date_for_display="January 01, 2005"
+        )
+        self.assertEqual(_release_year(album), "2005")
 
 
 class DetectAlbumTests(unittest.TestCase):
@@ -404,6 +429,41 @@ class CatalogTests(unittest.TestCase):
             result = cat.find("Artist", "Song")
             self.assertIsNotNone(result)
             self.assertEqual(result["album"], "Album A")
+
+    def test_all_entries_returns_all(self):
+        with TemporaryDirectory() as tmp:
+            cat = Catalog(Path(tmp) / "catalog.json")
+            cat.add("A", "One", "Album", "", "lyrics1")
+            cat.add("B", "Two", "Album", "", "lyrics2")
+            entries = cat.all_entries()
+            self.assertEqual(len(entries), 2)
+            self.assertEqual({e["title"] for e in entries}, {"One", "Two"})
+
+    def test_remove_with_album_sole_entry_cleans_index(self):
+        """Removing the only album variant cleans the title index entry."""
+        with TemporaryDirectory() as tmp:
+            cat = Catalog(Path(tmp) / "catalog.json")
+            cat.add("Artist", "Song", "Album A", "", "lyrics")
+            cat.remove("Artist", "Song", "Album A")
+            self.assertEqual(len(cat), 0)
+            self.assertIsNone(cat.find("Artist", "Song"))
+
+    def test_remove_album_entries_sole_variant_cleans_index(self):
+        """Removing the last album variant via remove_album_entries cleans the title index."""
+        with TemporaryDirectory() as tmp:
+            cat = Catalog(Path(tmp) / "catalog.json")
+            cat.add("Artist", "Song", "Album A", "", "lyrics")
+            removed = cat.remove_album_entries([("Artist", "Song", "Album A")])
+            self.assertEqual(removed, 1)
+            self.assertEqual(len(cat), 0)
+            self.assertIsNone(cat.find("Artist", "Song"))
+
+    def test_find_returns_none_when_index_stale(self):
+        """find() returns None when index keys are not present in _data (defensive guard)."""
+        with TemporaryDirectory() as tmp:
+            cat = Catalog(Path(tmp) / "catalog.json")
+            cat._title_index[("ghost", "track")] = ["ghost\ttrack\t"]
+            self.assertIsNone(cat.find("ghost", "track"))
 
     def test_find_is_case_insensitive(self):
         with TemporaryDirectory() as tmp:
