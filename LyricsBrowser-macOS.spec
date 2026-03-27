@@ -16,9 +16,12 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules
 CODESIGN_IDENTITY = None  # e.g. "Developer ID Application: Jane Doe (XXXXXXXXXX)"
 
 font_file = "Roboto Mono for Powerline.ttf"
+icon_file = "LyricsBrowser.icns"
 datas = [(font_file, ".")] if os.path.exists(font_file) else []
 if os.path.exists(".env"):
     datas.append((".env", "."))
+if os.path.exists(icon_file):
+    datas.append((icon_file, "."))
 
 lg_d, lg_b, lg_h = collect_all("lyricsgenius")
 pyg_d, pyg_b, pyg_h = collect_all("pyglet")
@@ -102,7 +105,7 @@ app = BUNDLE(
     info_plist={
         "CFBundleName": "LyricsBrowser",
         "CFBundleDisplayName": "Lyrics Browser",
-        "CFBundleShortVersionString": "1.4.1",
+        "CFBundleShortVersionString": "1.4.2",
         "CFBundleVersion": "1",
         "NSHighResolutionCapable": True,
         "NSRequiresAquaSystemAppearance": False,  # allows dark mode

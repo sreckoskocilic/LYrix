@@ -355,7 +355,8 @@ def main():
     import dotenv
 
     dotenv.load_dotenv(get_resource_path(".env"), override=True)
-    root = tb.Window(themename="darkly")
+    # iconphoto=None prevents ttkbootstrap from setting window icon
+    root = tb.Window(themename="darkly", iconphoto=None)
     root.title("Lyrics Search")
     LyricsApp(root)
     root.mainloop()

@@ -65,19 +65,8 @@ class LyricsBaseApp:
     # ── Font ──────────────────────────────────────────────────────────────────
 
     def _set_app_icon(self):
-        """Set the dock/taskbar icon from the bundled .icns file (macOS only)."""
-        if sys.platform != "darwin":
-            return
-        icon_path = get_resource_path("LyricsBrowser.icns")
-        if not icon_path.is_file():
-            return
-        try:
-            from AppKit import NSApplication, NSImage  # type: ignore
-
-            image = NSImage.alloc().initWithContentsOfFile_(str(icon_path))
-            NSApplication.sharedApplication().setApplicationIconImage_(image)
-        except Exception:
-            pass
+        """No-op - dock icon handled by macOS bundle."""
+        pass
 
     def _load_custom_font(self):
         font_path = get_resource_path("Roboto Mono for Powerline.ttf")
