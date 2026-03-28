@@ -10,7 +10,16 @@ from tkinter import ttk
 import ttkbootstrap as tb
 
 try:
-    from .base_app import LyricsBaseApp, THEME_BG, THEME_FG, THEME_SELECTBG
+    from .base_app import (
+        LyricsBaseApp,
+        THEME_BG,
+        THEME_FG,
+        THEME_SELECTBG,
+        BTN_BG,
+        BTN_BG_ACTIVE,
+        BTN_BG_DISABLED,
+        BTN_FG,
+    )
     from .catalog import (
         Catalog,
         CATALOG_PATH,
@@ -26,7 +35,16 @@ try:
     )
 except ImportError:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from base_app import LyricsBaseApp, THEME_BG, THEME_FG, THEME_SELECTBG  # type: ignore
+    from base_app import (
+        LyricsBaseApp,
+        THEME_BG,
+        THEME_FG,
+        THEME_SELECTBG,
+        BTN_BG,
+        BTN_BG_ACTIVE,
+        BTN_BG_DISABLED,
+        BTN_FG,
+    )  # type: ignore
     from catalog import (  # type: ignore
         Catalog,
         CATALOG_PATH,
@@ -358,6 +376,10 @@ def main():
     # iconphoto=None prevents ttkbootstrap from setting window icon
     root = tb.Window(themename="darkly", iconphoto=None)
     root.title("Lyrics Search")
+    root.style.configure("TButton", background=BTN_BG, foreground=BTN_FG)
+    root.style.map(
+        "TButton", background=[("active", BTN_BG_ACTIVE), ("disabled", BTN_BG_DISABLED)]
+    )
     LyricsApp(root)
     root.mainloop()
 

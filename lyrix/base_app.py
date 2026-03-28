@@ -17,11 +17,33 @@ except ImportError:
 _SETTINGS_PATH = _BASE_DIR / "settings.json"
 LOG_PATH = _BASE_DIR / "lyrix.log"
 
-# Darkly theme colors (for ScrolledText and other tk widgets)
-THEME_BG = "#222222"
-THEME_FG = "#cdd6f4"  # Softer white (Catppuccin-inspired)
-THEME_SELECTBG = "#555555"
-THEME_INPUTBG = "#2f2f2f"
+# ── Theme colors ──────────────────────────────────────────────────────────────
+# Edit these values to customize the appearance of the app.
+
+THEME_BG = "#222222"  # Main window / ScrolledText background
+THEME_FG = "#bbbbbb"  # Default text color (Catppuccin-inspired)
+THEME_SELECTBG = "#555555"  # Text selection background
+THEME_INPUTBG = "#2f2f2f"  # Input field background
+
+# Button colors
+BTN_BG = "#2c437d"  # Normal button background
+BTN_BG_ACTIVE = "#2e2e2e"  # Button background on hover/click
+BTN_BG_DISABLED = "#2a2a2a"  # Disabled button background
+BTN_FG = "#dddddd"  # Button text color
+
+# Catalog tree font sizes
+TREE_ARTIST_FONT_SIZE = 11  # Artist entries
+TREE_ALBUM_FONT_SIZE = 11  # Album entries
+TREE_SONG_FONT_SIZE = 11  # Song entries
+
+# Catalog tree colors (defaults; user can override via color pickers)
+TREE_ARTIST_COLOR = "#cfd424"  # Artist entries
+TREE_ALBUM_COLOR = "#ff8099"  # Album entries
+TREE_SONG_COLOR = "#5bc0de"  # Song entries
+TREE_MISSING_COLOR = "#6c7086"  # Songs with missing lyrics
+
+# Filter entry placeholder color
+FILTER_PLACEHOLDER_COLOR = "#6c7086"
 
 
 def _setup_logging():

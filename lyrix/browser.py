@@ -14,7 +14,25 @@ from tkinter import ttk
 import ttkbootstrap as tb
 
 try:
-    from .base_app import LyricsBaseApp, THEME_BG, THEME_FG, THEME_SELECTBG, _year_sort
+    from .base_app import (
+        LyricsBaseApp,
+        THEME_BG,
+        THEME_FG,
+        THEME_SELECTBG,
+        _year_sort,
+        BTN_BG,
+        BTN_BG_ACTIVE,
+        BTN_BG_DISABLED,
+        BTN_FG,
+        TREE_ARTIST_COLOR,
+        TREE_ALBUM_COLOR,
+        TREE_SONG_COLOR,
+        TREE_MISSING_COLOR,
+        FILTER_PLACEHOLDER_COLOR,
+        TREE_ARTIST_FONT_SIZE,
+        TREE_ALBUM_FONT_SIZE,
+        TREE_SONG_FONT_SIZE,
+    )
     from .browser_actions import BrowserActions
     from .browser_search import BrowserSearch
     from .catalog import (
@@ -28,7 +46,25 @@ try:
     )
 except ImportError:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from base_app import LyricsBaseApp, THEME_BG, THEME_FG, THEME_SELECTBG, _year_sort  # type: ignore
+    from base_app import (  # type: ignore
+        LyricsBaseApp,
+        THEME_BG,
+        THEME_FG,
+        THEME_SELECTBG,
+        _year_sort,
+        BTN_BG,
+        BTN_BG_ACTIVE,
+        BTN_BG_DISABLED,
+        BTN_FG,
+        TREE_ARTIST_COLOR,
+        TREE_ALBUM_COLOR,
+        TREE_SONG_COLOR,
+        TREE_MISSING_COLOR,
+        FILTER_PLACEHOLDER_COLOR,
+        TREE_ARTIST_FONT_SIZE,
+        TREE_ALBUM_FONT_SIZE,
+        TREE_SONG_FONT_SIZE,
+    )
     from browser_actions import BrowserActions  # type: ignore
     from browser_search import BrowserSearch  # type: ignore
     from catalog import (  # type: ignore
@@ -57,10 +93,12 @@ class LyricsBrowser(LyricsBaseApp, BrowserActions, BrowserSearch):
 
         # Load color settings before building UI
         settings = self._read_settings()
-        self._lyrics_fg = settings.get("lyrics_fg", "#cdd6f4")
-        self._tree_song_color = settings.get("tree_song_color", "#5bc0de")
-        self._tree_album_color = settings.get("tree_album_color", THEME_FG)
-        self._tree_missing_color = settings.get("tree_missing_color", "#6c7086")
+        self._lyrics_fg = settings.get("lyrics_fg", THEME_FG)
+        self._tree_song_color = settings.get("tree_song_color", TREE_SONG_COLOR)
+        self._tree_album_color = settings.get("tree_album_color", TREE_ALBUM_COLOR)
+        self._tree_missing_color = settings.get(
+            "tree_missing_color", TREE_MISSING_COLOR
+        )
         self._current_theme: str = settings.get("theme", "darkly")
         if self._current_theme not in self.VALID_THEMES:
             self._current_theme = "darkly"
@@ -177,20 +215,17 @@ class LyricsBrowser(LyricsBaseApp, BrowserActions, BrowserSearch):
         btn_frame = ttk.Frame(frame)
         btn_frame.pack(fill="x", pady=(0, 8))
         self._search_song_btn = ttk.Button(
-            btn_frame, text="Song Lyrics", width=15, command=self._search_song_lyrics
+            btn_frame, text="Song Lyrics", command=self._search_song_lyrics
         )
-        self._search_song_btn.pack(side="left", padx=(0, 6))
+        self._search_song_btn.pack(side="left", padx=(0, 6), expand=True, fill="x")
         self._search_album_btn = ttk.Button(
-            btn_frame, text="Album Lyrics", width=15, command=self._search_album_lyrics
+            btn_frame, text="Album Lyrics", command=self._search_album_lyrics
         )
-        self._search_album_btn.pack(side="left", padx=(0, 6))
+        self._search_album_btn.pack(side="left", padx=(0, 6), expand=True, fill="x")
         self._search_artist_btn = ttk.Button(
-            btn_frame, text="Artist", width=15, command=self._search_artist_songs
+            btn_frame, text="Artist", command=self._search_artist_songs
         )
-        self._search_artist_btn.pack(side="left", padx=(0, 6))
-        ttk.Button(btn_frame, text="Save", width=15, command=self._save_lyrics).pack(
-            side="left"
-        )
+        self._search_artist_btn.pack(side="left", expand=True, fill="x")
 
         self._filter_entry = ttk.Entry(
             frame, textvariable=self.filter_var, font=(FONT_NAME, 10)
@@ -204,7 +239,7 @@ class LyricsBrowser(LyricsBaseApp, BrowserActions, BrowserSearch):
         )
         self._filter_placeholder = True
         self._filter_entry.insert(0, "Filter…")
-        self._filter_entry.configure(foreground="#6c7086")
+        self._filter_entry.configure(foreground=FILTER_PLACEHOLDER_COLOR)
 
         tree_frame = ttk.Frame(frame)
         tree_frame.pack(fill="both", expand=True)
@@ -225,20 +260,38 @@ class LyricsBrowser(LyricsBaseApp, BrowserActions, BrowserSearch):
             "write", self._on_filter_change
         )
 
-        self.tree.tag_configure("artist", font=(FONT_NAME, 9, "bold"))
-        self.tree.tag_configure("album", foreground=self._tree_album_color)
-        self.tree.tag_configure("song", foreground=self._tree_song_color)
-        self.tree.tag_configure("missing", foreground=self._tree_missing_color)
+        self.tree.tag_configure(
+            "artist",
+            font=(FONT_NAME, TREE_ARTIST_FONT_SIZE, "bold"),
+            foreground=TREE_ARTIST_COLOR,
+        )
+        self.tree.tag_configure(
+            "album",
+            font=(FONT_NAME, TREE_ALBUM_FONT_SIZE),
+            foreground=self._tree_album_color,
+        )
+        self.tree.tag_configure(
+            "song",
+            font=(FONT_NAME, TREE_SONG_FONT_SIZE),
+            foreground=self._tree_song_color,
+        )
+        self.tree.tag_configure(
+            "missing",
+            font=(FONT_NAME, TREE_SONG_FONT_SIZE),
+            foreground=self._tree_missing_color,
+        )
 
         btn_row = ttk.Frame(frame)
         btn_row.pack(fill="x", pady=(4, 2))
-        ttk.Button(
-            btn_row, text="Remove", width=15, command=self._remove_selected
-        ).pack(side="left", padx=(0, 4))
-        self._update_btn = ttk.Button(
-            btn_row, text="Update", width=15, command=self._update_selected
+        ttk.Button(btn_row, text="Remove", command=self._remove_selected).pack(
+            side="left", padx=(0, 4), expand=True, fill="x"
         )
-        self._update_btn.pack(side="left")
+        self._update_btn = ttk.Button(
+            btn_row, text="Update", command=self._update_selected
+        )
+        self._update_btn.pack(side="left", padx=(0, 4), expand=True, fill="x")
+        self._save_btn = ttk.Button(btn_row, text="Save", command=self._save_lyrics)
+        self._save_btn.pack(side="left", expand=True, fill="x")
 
         self._gated_buttons = [
             self._search_song_btn,
@@ -338,7 +391,7 @@ class LyricsBrowser(LyricsBaseApp, BrowserActions, BrowserSearch):
         self._filter_placeholder = True
         self._filter_entry.delete(0, tk.END)
         self._filter_entry.insert(0, "Filter…")
-        self._filter_entry.configure(foreground="#6c7086")
+        self._filter_entry.configure(foreground=FILTER_PLACEHOLDER_COLOR)
         if self._filter_after_id is not None:
             self.master.after_cancel(self._filter_after_id)
             self._filter_after_id = None
@@ -354,7 +407,7 @@ class LyricsBrowser(LyricsBaseApp, BrowserActions, BrowserSearch):
         if not self.filter_var.get():
             self._filter_placeholder = True
             entry.insert(0, "Filter…")
-            entry.configure(foreground="#6c7086")
+            entry.configure(foreground=FILTER_PLACEHOLDER_COLOR)
 
     # ── Catalog browser ───────────────────────────────────────────────────────
 
@@ -959,6 +1012,10 @@ def main():
     # This avoids dock icon issues on macOS
     root = tb.Window(themename="darkly", iconphoto=None)
     root.title("Lyrics Browser")
+    root.style.configure("TButton", background=BTN_BG, foreground=BTN_FG)
+    root.style.map(
+        "TButton", background=[("active", BTN_BG_ACTIVE), ("disabled", BTN_BG_DISABLED)]
+    )
 
     LyricsBrowser(root)
     root.mainloop()
