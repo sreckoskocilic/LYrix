@@ -16,6 +16,8 @@ except ImportError:
 
 _SETTINGS_PATH = _BASE_DIR / "settings.json"
 LOG_PATH = _BASE_DIR / "lyrix.log"
+_log = logging.getLogger(__name__)
+_SORT_LAST = 9999  # sentinel: sort unknown/missing values to the end
 
 # ── Theme colors ──────────────────────────────────────────────────────────────
 # Edit these values to customize the appearance of the app.
@@ -64,9 +66,9 @@ def _setup_logging():
 def _year_sort(year_str: str) -> int:
     """Convert a year string to a sort key. Unknown/missing years sort last."""
     try:
-        return int(year_str or 0) or 9999
+        return int(year_str or 0) or _SORT_LAST
     except (ValueError, TypeError):
-        return 9999
+        return _SORT_LAST
 
 
 class LyricsBaseApp:
@@ -197,11 +199,9 @@ class LyricsBaseApp:
             _SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
             tmp.write_text(content, encoding="utf-8")
             tmp.replace(_SETTINGS_PATH)
-        except Exception:
-            try:
-                tmp.unlink()
-            except OSError:
-                pass
+        except Exception as exc:
+            _log.error("Failed to write settings: %s", exc)
+            tmp.unlink(missing_ok=True)
 
     def _restore_geometry(self, default: str = "", settings: dict | None = None):
         if settings is None:

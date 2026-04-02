@@ -381,6 +381,12 @@ def main():
         "TButton", background=[("active", BTN_BG_ACTIVE), ("disabled", BTN_BG_DISABLED)]
     )
     LyricsApp(root)
+    if sys.platform == "darwin":
+        # Force proper window activation on macOS when launched via double-click
+        root.update_idletasks()
+        root.lift()
+        root.focus_force()
+        root.focus_set()
     root.mainloop()
 
 

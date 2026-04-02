@@ -178,8 +178,6 @@ class BrowserSearch:
         try:
             self.catalog.add_many(entries_to_add)
         except Exception as exc:
-            import tkinter.messagebox as mb
-
             mb.showerror("Error", f"Failed to save album to catalog:\n{exc}")
             return
 

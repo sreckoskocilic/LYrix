@@ -72,12 +72,12 @@ class CatalogTests(unittest.TestCase):
             self.assertEqual(removed, 2)
             self.assertEqual(len(cat), 0)
 
-    def test_remove_artist_skips_malformed_keys(self):
+    def test_remove_artist_ignores_unindexed_data(self):
         with TemporaryDirectory() as tmp:
             cat_path = Path(tmp) / "catalog.json"
             cat = Catalog(cat_path)
             cat.add("Artist", "One", "Album", "", "lyrics")
-            # Inject a malformed key (no tab separators) directly into _data
+            # Inject a malformed key directly into _data (bypasses the index)
             cat._data["malformed"] = {
                 "artist": "Artist",
                 "title": "Bad",
@@ -87,10 +87,11 @@ class CatalogTests(unittest.TestCase):
                 "lyrics": "",
                 "added": "",
             }
-            # Should not raise; both the valid and the malformed entry are removed
+            # Should not raise; only the indexed entry is removed — the unindexed
+            # malformed key is invisible to the index-based remove_artist.
             removed = cat.remove_artist("Artist")
-            self.assertEqual(removed, 2)
-            self.assertEqual(len(cat), 0)
+            self.assertEqual(removed, 1)
+            self.assertIn("malformed", cat._data)
 
     def test_thread_safety_under_parallel_adds(self):
         with TemporaryDirectory() as tmp:
@@ -124,11 +125,24 @@ class CatalogTests(unittest.TestCase):
             cat_path = Path(tmp) / "catalog.json"
             cat_path.write_text(
                 json.dumps(
-                    {"entries": {"a\tb": {"artist": "A", "title": "B", "lyrics": ""}}}
+                    {
+                        "entries": {
+                            "a\tb\t": {
+                                "artist": "A",
+                                "title": "B",
+                                "album": "",
+                                "lyrics": "x",
+                                "year": "",
+                                "track": 0,
+                                "added": "2024-01-01T00:00:00",
+                            }
+                        }
+                    }
                 )
             )
             cat = Catalog(cat_path)
             self.assertEqual(len(cat), 1)
+            self.assertIsNotNone(cat.get("A", "B", ""))
 
     def test_add_many_empty_list_is_noop(self):
         with TemporaryDirectory() as tmp:
@@ -223,6 +237,17 @@ class CatalogTests(unittest.TestCase):
 
             cat.reload()
             self.assertEqual(len(cat), 1)  # reload was skipped
+
+    def test_reload_skips_when_in_memory_newer_than_disk(self):
+        """reload() does not overwrite in-memory state when _file_mtime is ahead of disk mtime."""
+        with TemporaryDirectory() as tmp:
+            cat_path = Path(tmp) / "catalog.json"
+            cat = Catalog(cat_path)
+            cat.add("A", "Song", "Album", "2020", "lyrics")
+            # Bump _file_mtime past what is on disk (simulates a concurrent _save())
+            cat._file_mtime = cat_path.stat().st_mtime_ns + 1_000_000_000
+            cat.reload()
+            self.assertEqual(len(cat), 1)  # stale disk version not applied
 
     def test_add_preserves_added_timestamp_on_update(self):
         with TemporaryDirectory() as tmp:
@@ -454,6 +479,18 @@ class CatalogTests(unittest.TestCase):
             self.assertEqual(len(cat), 0)
             self.assertIsNone(cat.find("Artist", "Song"))
 
+    def test_index_remove_key_missing_lookup_is_noop(self):
+        """_index_remove_key does nothing when the lookup key is absent."""
+        index: dict = {}
+        Catalog._index_remove_key(index, ("x", "y"), "some_key")
+        self.assertEqual(index, {})
+
+    def test_index_remove_key_absent_entry_is_noop(self):
+        """_index_remove_key does nothing when the entry key is not in the list."""
+        index: dict = {("x", "y"): ["other_key"]}
+        Catalog._index_remove_key(index, ("x", "y"), "missing_key")
+        self.assertEqual(index, {("x", "y"): ["other_key"]})
+
     def test_find_returns_none_when_index_stale(self):
         """find() returns None when index keys are not present in _data (defensive guard)."""
         with TemporaryDirectory() as tmp:
@@ -518,6 +555,21 @@ class CatalogTests(unittest.TestCase):
             cat.add("Artist", "Two", "Album", "", "lyrics")
             duplicates = cat.find_duplicates()
             self.assertEqual(len(duplicates), 0)
+
+    def test_stats(self):
+        with TemporaryDirectory() as tmp:
+            cat = Catalog(Path(tmp) / "catalog.json")
+            cat.add("Artist A", "Song 1", "Album 1", "2020", "lyrics")
+            cat.add("Artist A", "Song 2", "Album 1", "2020", "")  # no lyrics
+            cat.add("Artist A", "Song 1", "Album 2", "2021", "lyrics")  # duplicate
+            cat.add("Artist B", "Song 3", "Album 3", "2022", "lyrics")
+            s = cat.stats()
+            self.assertEqual(s["artists"], 2)
+            self.assertEqual(s["albums"], 3)
+            self.assertEqual(s["songs"], 4)
+            self.assertEqual(s["with_lyrics"], 3)
+            self.assertEqual(s["without_lyrics"], 1)
+            self.assertEqual(s["duplicates"], 1)
 
     def test_export_csv(self):
         with TemporaryDirectory() as tmp:

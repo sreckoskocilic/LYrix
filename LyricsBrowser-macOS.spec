@@ -105,10 +105,11 @@ app = BUNDLE(
     info_plist={
         "CFBundleName": "LyricsBrowser",
         "CFBundleDisplayName": "Lyrics Browser",
-        "CFBundleShortVersionString": "1.4.2",
+        "CFBundleShortVersionString": "1.5.0",
         "CFBundleVersion": "1",
         "NSHighResolutionCapable": True,
         "NSRequiresAquaSystemAppearance": False,  # allows dark mode
         "NSAppleEventsUsageDescription": "Lyrics Browser uses Apple Events for file dialogs.",
+        "NSPrincipalClass": "NSApplication",
     },
 )

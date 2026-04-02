@@ -4,6 +4,8 @@ import logging
 import threading
 import tkinter.messagebox as mb
 
+_log = logging.getLogger(__name__)
+
 try:
     from .catalog import (
         SONGS_CATEGORY,
@@ -184,7 +186,7 @@ class BrowserActions:
                 try:
                     ss = self.genius.search_album(album_name, artist)
                 except Exception as exc:
-                    logging.getLogger(__name__).warning(
+                    _log.warning(
                         "Album fetch failed for %s / %s: %s", artist, album_name, exc
                     )
                     ss = None
@@ -198,7 +200,7 @@ class BrowserActions:
                         )
                         self.catalog.add_many(entries)
                     except Exception as exc:
-                        logging.getLogger(__name__).warning(
+                        _log.warning(
                             "Album update failed for %s / %s: %s",
                             artist,
                             album_name,
@@ -218,9 +220,7 @@ class BrowserActions:
                 try:
                     ss = self.genius.search_song(t, a)
                 except Exception as exc:
-                    logging.getLogger(__name__).warning(
-                        "Song fetch failed for %s / %s: %s", a, t, exc
-                    )
+                    _log.warning("Song fetch failed for %s / %s: %s", a, t, exc)
                     failed += 1
                     continue
                 if ss:
@@ -326,7 +326,7 @@ class BrowserActions:
             try:
                 ss = self.genius.search_album(album_name, artist_name)
             except Exception as exc:
-                logging.getLogger(__name__).warning(
+                _log.warning(
                     "Album fetch failed for %s / %s: %s", artist_name, album_name, exc
                 )
                 failed += 1
@@ -379,7 +379,7 @@ class BrowserActions:
             try:
                 ss = self.genius.search_song(e["title"], e["artist"])
             except Exception as exc:
-                logging.getLogger(__name__).warning(
+                _log.warning(
                     "Fetch missing failed for %s / %s: %s", e["artist"], e["title"], exc
                 )
                 failed += 1
@@ -407,10 +407,10 @@ class BrowserActions:
         if fetched_entries:
             try:
                 self.catalog.add_many(fetched_entries)
-            except Exception as e:
+            except Exception as exc:
                 self._ui(self._set_busy, False)
                 self._ui(
-                    mb.showerror, "Error", f"Failed to save lyrics to catalog:\n{e}"
+                    mb.showerror, "Error", f"Failed to save lyrics to catalog:\n{exc}"
                 )
                 return
         self._ui(self._set_busy, False)

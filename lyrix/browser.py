@@ -20,6 +20,7 @@ try:
         THEME_FG,
         THEME_SELECTBG,
         _year_sort,
+        _SORT_LAST,
         BTN_BG,
         BTN_BG_ACTIVE,
         BTN_BG_DISABLED,
@@ -52,6 +53,7 @@ except ImportError:
         THEME_FG,
         THEME_SELECTBG,
         _year_sort,
+        _SORT_LAST,
         BTN_BG,
         BTN_BG_ACTIVE,
         BTN_BG_DISABLED,
@@ -413,7 +415,10 @@ class LyricsBrowser(LyricsBaseApp, BrowserActions, BrowserSearch):
 
     def _fuzzy_match(self, query: str, text: str, threshold: float = 0.6) -> bool:
         """Return True if query fuzzy-matches text above threshold."""
-        return difflib.SequenceMatcher(None, query, text).ratio() >= threshold
+        return (
+            difflib.SequenceMatcher(None, query, text, autojunk=False).ratio()
+            >= threshold
+        )
 
     def _refresh_tree(self):
         if self._filter_after_id is not None:
@@ -466,7 +471,7 @@ class LyricsBrowser(LyricsBaseApp, BrowserActions, BrowserSearch):
                 x[1],  # artist_lower
                 _year_sort(canon_year.get(x[4], "")),
                 x[3],  # album_lower
-                x[0].get("track") or 9999,
+                x[0].get("track") or _SORT_LAST,
                 x[2],  # title_lower
             ),
         )
@@ -739,10 +744,13 @@ class LyricsBrowser(LyricsBaseApp, BrowserActions, BrowserSearch):
 
         menu = tk.Menu(self.master, tearoff=0)
         genius_available = self.genius is not None and not self._busy
+        menu_has_items = False
         if "song" in tags or "missing" in tags:
             menu.add_command(label="Remove Song", command=self._remove_selected)
+            menu_has_items = True
         elif "album" in tags:
             menu.add_command(label="Remove Album", command=self._remove_selected)
+            menu_has_items = True
         elif "artist" in tags:
             if genius_available:
                 menu.add_command(
@@ -750,8 +758,9 @@ class LyricsBrowser(LyricsBaseApp, BrowserActions, BrowserSearch):
                 )
                 menu.add_separator()
             menu.add_command(label="Remove Artist", command=self._remove_selected)
+            menu_has_items = True
 
-        if menu.index("end") is not None:
+        if menu_has_items:
             menu.add_separator()
             menu.add_command(label="Export Catalog…", command=self._export_catalog)
             if genius_available:
@@ -929,20 +938,14 @@ class LyricsBrowser(LyricsBaseApp, BrowserActions, BrowserSearch):
 
     def _show_stats(self):
         """Show catalog statistics in a message box."""
-        entries = self.catalog.all_entries()
-        artists = {e["artist"] for e in entries}
-        albums = {(e["artist"], e.get("album", "")) for e in entries}
-        with_lyrics = sum(1 for e in entries if e.get("lyrics", "").strip())
-        without_lyrics = len(entries) - with_lyrics
-        duplicates = self.catalog.find_duplicates()
-
+        s = self.catalog.stats()
         msg = (
-            f"Artists: {len(artists)}\n"
-            f"Albums: {len(albums)}\n"
-            f"Songs: {len(entries)}\n"
-            f"With lyrics: {with_lyrics}\n"
-            f"Without lyrics: {without_lyrics}\n"
-            f"Duplicate entries: {len(duplicates)}"
+            f"Artists: {s['artists']}\n"
+            f"Albums: {s['albums']}\n"
+            f"Songs: {s['songs']}\n"
+            f"With lyrics: {s['with_lyrics']}\n"
+            f"Without lyrics: {s['without_lyrics']}\n"
+            f"Duplicate entries: {s['duplicates']}"
         )
         mb.showinfo("Catalog Stats", msg)
 
