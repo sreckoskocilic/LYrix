@@ -57,6 +57,8 @@ THEME_CURSOR = "#939393"  # Text insertion cursor (insertbackground)
 
 def _setup_logging():
     """Configure logging to file with rotation (max 256 KB, keep 1 backup)."""
+    if logging.root.handlers:
+        return
     _BASE_DIR.mkdir(parents=True, exist_ok=True)
 
     logging.basicConfig(
